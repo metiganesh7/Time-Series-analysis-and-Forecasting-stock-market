@@ -1,0 +1,119 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+from prophet import Prophet
+from sklearn.preprocessing import MinMaxScaler
+from keras.models import Sequential
+from keras.layers import LSTM, Dense
+import matplotlib.pyplot as plt
+import warnings
+
+warnings.filterwarnings("ignore")
+st.set_option('deprecation.showPyplotGlobalUse', False)
+
+st.title("Stock Price Forecasting App 📈")
+
+# 1️⃣ CSV Upload
+uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
+if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file)
+    st.success("File uploaded successfully!")
+    st.write(df.head())
+
+    # 2️⃣ Select columns
+    columns = df.columns.tolist()
+    date_col = st.selectbox("Select Date column", columns)
+    value_col = st.selectbox("Select Value column", columns)
+
+    # Ensure datetime index
+    df[date_col] = pd.to_datetime(df[date_col])
+    df.sort_values(by=date_col, inplace=True)
+    df.set_index(date_col, inplace=True)
+
+    # 3️⃣ Choose model
+    model_option = st.selectbox("Select Forecasting Model", ["ARIMA", "SARIMA", "Prophet", "LSTM"])
+
+    # 4️⃣ Forecast horizon
+    periods = st.number_input("Forecast periods (days)", min_value=1, max_value=365, value=30)
+
+    if st.button("Run Forecast"):
+        st.info(f"Running {model_option} forecast for {periods} periods...")
+
+        if model_option == "ARIMA":
+            model = ARIMA(df[value_col], order=(5,1,0))
+            model_fit = model.fit()
+            forecast = model_fit.forecast(steps=periods)
+            st.write(forecast)
+            plt.figure(figsize=(10,5))
+            plt.plot(df[value_col], label="Actual")
+            plt.plot(pd.date_range(df.index[-1]+pd.Timedelta(days=1), periods=periods), forecast, label="Forecast")
+            plt.legend()
+            st.pyplot()
+
+        elif model_option == "SARIMA":
+            model = SARIMAX(df[value_col], order=(1,1,1), seasonal_order=(1,1,1,12))
+            model_fit = model.fit()
+            forecast = model_fit.get_forecast(steps=periods).predicted_mean
+            st.write(forecast)
+            plt.figure(figsize=(10,5))
+            plt.plot(df[value_col], label="Actual")
+            plt.plot(pd.date_range(df.index[-1]+pd.Timedelta(days=1), periods=periods), forecast, label="Forecast")
+            plt.legend()
+            st.pyplot()
+
+        elif model_option == "Prophet":
+            prophet_df = df.reset_index().rename(columns={date_col:"ds", value_col:"y"})
+            m = Prophet(daily_seasonality=True)
+            m.fit(prophet_df)
+            future = m.make_future_dataframe(periods=periods)
+            forecast = m.predict(future)
+            st.write(forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(periods))
+            m.plot(forecast)
+            st.pyplot()
+
+        elif model_option == "LSTM":
+            # Prepare data
+            data = df[value_col].values.reshape(-1,1)
+            scaler = MinMaxScaler()
+            data_scaled = scaler.fit_transform(data)
+
+            X, y = [], []
+            seq_len = 60
+            for i in range(seq_len, len(data_scaled)):
+                X.append(data_scaled[i-seq_len:i, 0])
+                y.append(data_scaled[i,0])
+            X, y = np.array(X), np.array(y)
+            X = np.reshape(X, (X.shape[0], X.shape[1],1))
+
+            # LSTM model
+            lstm_model = Sequential()
+            lstm_model.add(LSTM(50, return_sequences=True, input_shape=(X.shape[1],1)))
+            lstm_model.add(LSTM(50))
+            lstm_model.add(Dense(1))
+            lstm_model.compile(optimizer='adam', loss='mean_squared_error')
+            lstm_model.fit(X, y, epochs=5, batch_size=32, verbose=0)
+
+            # Predict future
+            last_sequence = data_scaled[-seq_len:]
+            predicted = []
+            current_seq = last_sequence.copy()
+            for _ in range(periods):
+                pred = lstm_model.predict(current_seq.reshape(1,seq_len,1))[0,0]
+                predicted.append(pred)
+                current_seq = np.append(current_seq[1:], pred)
+            predicted_prices = scaler.inverse_transform(np.array(predicted).reshape(-1,1))
+            forecast_index = pd.date_range(df.index[-1]+pd.Timedelta(days=1), periods=periods)
+            forecast_series = pd.Series(predicted_prices.flatten(), index=forecast_index)
+            st.write(forecast_series)
+            plt.figure(figsize=(10,5))
+            plt.plot(df[value_col], label="Actual")
+            plt.plot(forecast_series, label="Forecast")
+            plt.legend()
+            st.pyplot()
+
+        st.success("Forecast completed!")
+
+else:
+    st.info("Please upload a CSV file to begin.")
