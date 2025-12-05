@@ -1,6 +1,7 @@
 
 import argparse
 import os
+sys.path.append(os.path.join(os.path.dirname(__file__), 'scripts'))
 from .scripts.utils import download_data, prepare_series, train_test_split_series
 from scripts.arima_model import train_arima, forecast_arima
 from scripts.sarima_model import train_sarima, forecast_sarima
