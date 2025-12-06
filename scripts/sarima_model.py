@@ -7,35 +7,26 @@ import pandas as pd
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 
-def train_sarima(train, order=(1,1,1), seasonal_order=(1,1,1,12),
+def train_sarima(train_series, order=(1,1,1), seasonal_order=(1,1,1,12),
                  save_path='models', name='sarima_model.pkl'):
-    """
-    Train a SARIMA model on a pandas Series or DataFrame column.
-    """
-
     os.makedirs(save_path, exist_ok=True)
 
-    # If train is a DataFrame, convert to Series
-    if isinstance(train, pd.DataFrame):
-        train = train.iloc[:, 0]
+    if isinstance(train_series, pd.DataFrame):
+        train_series = train_series.squeeze()
 
     model = SARIMAX(
-        train,
+        train_series,
         order=order,
         seasonal_order=seasonal_order,
         enforce_stationarity=False,
         enforce_invertibility=False
     )
+    result = model.fit(disp=False)
 
-    res = model.fit(disp=False)
-
-    joblib.dump(res, os.path.join(save_path, name))
-    return res
+    joblib.dump(result, os.path.join(save_path, name))
+    return result
 
 
-def forecast_sarima(model_res, steps=30):
-    """
-    Forecast next N time steps using a fitted SARIMA model.
-    """
-    pred = model_res.get_forecast(steps=steps).predicted_mean
-    return pred
+def forecast_sarima(model, steps=30):
+    pred = model.get_forecast(steps=steps).predicted_mean
+    return pred.tolist()
