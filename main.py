@@ -2,11 +2,11 @@ import sys
 import argparse
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), 'scripts'))
-from .Scripts.utils import download_data, prepare_series, train_test_split_series
-from Scripts.arima_model import train_arima, forecast_arima
-from Scripts.sarima_model import train_sarima, forecast_sarima
-from Scripts.prophet_model import train_prophet, forecast_prophet
-from Scripts.lstm_model import train_lstm, forecast_lstm
+from .scripts.utils import download_data, prepare_series, train_test_split_series
+from scripts.arima_model import train_arima, forecast_arima
+from scripts.sarima_model import train_sarima, forecast_sarima
+from scripts.prophet_model import train_prophet, forecast_prophet
+from scripts.lstm_model import train_lstm, forecast_lstm
 import pandas as pd
 import matplotlib.pyplot as plt
 
