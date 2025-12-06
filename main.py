@@ -23,6 +23,19 @@ from scripts.prophet_model import train_prophet, forecast_prophet
 from scripts.lstm_model import train_lstm, forecast_lstm
 
 # =========================
+# ✅ BUY / SELL SIGNAL LOGIC
+# =========================
+def generate_signal(last_price, forecast_price):
+    change_pct = ((forecast_price - last_price) / last_price) * 100
+
+    if change_pct > 2:
+        return "✅ BUY", change_pct
+    elif change_pct < -2:
+        return "🔻 SELL", change_pct
+    else:
+        return "⏸ HOLD", change_pct
+
+# =========================
 # ✅ BASIC UI
 # =========================
 st.set_page_config(page_title="Stock Forecasting", layout="wide")
@@ -48,7 +61,7 @@ html, body, .stApp {
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 Stock Forecasting Dashboard (Stable Version)")
+st.title("📊 Stock Forecasting Dashboard (Professional Version)")
 
 # =========================
 # ✅ HELPERS
@@ -123,6 +136,15 @@ with tab1:
     series = prepare_series(df, price_col)
     train, test = train_test_split_series(series, 0.2)
 
+    # =========================
+    # ✅ FORECAST HORIZON
+    # =========================
+    horizon = st.selectbox(
+        "📅 Select Forecast Horizon (Days)",
+        [7, 15, 30, 60],
+        index=2
+    )
+
     if st.button("🚀 Run Forecast Models"):
 
         preds = {}
@@ -132,8 +154,15 @@ with tab1:
         # ============ ARIMA ============
         try:
             arima = train_arima(train, order=(5,1,0))
-            pred = forecast_arima(arima, len(test))
-            preds["ARIMA"] = pd.Series(pred, index=test.index)
+            pred = forecast_arima(arima, horizon)
+
+            future_index = pd.date_range(
+                start=series.index[-1] + pd.Timedelta(days=1),
+                periods=horizon,
+                freq="D"
+            )
+
+            preds["ARIMA"] = pd.Series(pred, index=future_index)
             st.success("✅ ARIMA success")
         except Exception as e:
             errors["ARIMA"] = str(e)
@@ -141,8 +170,8 @@ with tab1:
         # ============ SARIMA ============
         try:
             sarima = train_sarima(train)
-            pred = forecast_sarima(sarima, len(test))
-            preds["SARIMA"] = pd.Series(pred, index=test.index)
+            pred = forecast_sarima(sarima, horizon)
+            preds["SARIMA"] = pd.Series(pred, index=future_index)
             st.success("✅ SARIMA success")
         except Exception as e:
             errors["SARIMA"] = str(e)
@@ -150,8 +179,8 @@ with tab1:
         # ============ PROPHET ============
         try:
             prophet = train_prophet(train)
-            pvals = forecast_prophet(prophet, len(test))
-            preds["Prophet"] = pd.Series(pvals.values, index=test.index)
+            pvals = forecast_prophet(prophet, horizon)
+            preds["Prophet"] = pd.Series(pvals.values, index=future_index)
             st.success("✅ Prophet success")
         except Exception as e:
             errors["Prophet"] = str(e)
@@ -169,8 +198,8 @@ with tab1:
                 batch_size=8
             )
 
-            lvals = forecast_lstm(lstm_model, scaled, scaler, 20, len(test))
-            preds["LSTM"] = pd.Series(lvals, index=test.index)
+            lvals = forecast_lstm(lstm_model, scaled, scaler, 20, horizon)
+            preds["LSTM"] = pd.Series(lvals, index=future_index)
             st.success("✅ LSTM success")
         except Exception as e:
             errors["LSTM"] = str(e)
@@ -202,9 +231,10 @@ with tab1:
         st.subheader("📈 Model Accuracy")
 
         for name, p in preds.items():
-            rmse = np.sqrt(mean_squared_error(test, p))
-            mse = mean_squared_error(test, p)
-            mape = np.mean(np.abs((test - p) / test)) * 100
+            align_len = min(len(test), len(p))
+            rmse = np.sqrt(mean_squared_error(test.values[:align_len], p.values[:align_len]))
+            mse = mean_squared_error(test.values[:align_len], p.values[:align_len])
+            mape = np.mean(np.abs((test.values[:align_len] - p.values[:align_len]) / test.values[:align_len])) * 100
 
             metrics[name] = {
                 "RMSE": rmse,
@@ -234,8 +264,7 @@ with tab1:
         st.subheader("📊 Combined Forecast")
 
         fig, ax = plt.subplots(figsize=(12,5))
-        train.plot(ax=ax, label="Train")
-        test.plot(ax=ax, label="Test")
+        series.plot(ax=ax, label="Actual")
 
         for name, p in preds.items():
             p.plot(ax=ax, label=name)
@@ -256,6 +285,26 @@ with tab1:
             "combined_forecast.png",
             "image/png"
         )
+
+        # =========================
+        # ✅ BUY / SELL SIGNAL
+        # =========================
+        if "ARIMA" in preds:
+            last_price = series.iloc[-1]
+            future_price = preds["ARIMA"].iloc[-1]
+
+            signal, strength = generate_signal(last_price, future_price)
+
+            st.markdown("---")
+            st.subheader("📢 AI Trading Signal")
+            st.metric("Expected Change (%)", f"{strength:.2f}%")
+
+            if "BUY" in signal:
+                st.success(f"🚀 {signal} — Strong upward momentum expected")
+            elif "SELL" in signal:
+                st.error(f"⚠ {signal} — Downward momentum detected")
+            else:
+                st.warning(f"⏸ {signal} — Market moving sideways")
 
         # =========================
         # ✅ ERRORS (IF ANY)
