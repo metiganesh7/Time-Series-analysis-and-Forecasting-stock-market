@@ -1,19 +1,32 @@
 import numpy as np
 import pandas as pd
-from statsmodels.tsa.statespace.sarimax import SARIMAX
-
+from statsmodels.tsa.arima.model import ARIMA
 import warnings
 warnings.filterwarnings('ignore')
-import joblib, os
 
+import joblib
+import os
 
-def train_sarima(train, order=(1,1,1), seasonal_order=(1,1,1,12), save_path='models', name='sarima_model.pkl'):
+def train_arima(train, order=(5,1,0), save_path='models', name='arima_model.pkl'):
+    """
+    Train an ARIMA model and save it to disk.
+    """
     os.makedirs(save_path, exist_ok=True)
-    model = SARIMAX(train, order=order, seasonal_order=seasonal_order, enforce_stationarity=False, enforce_invertibility=False)
-    res = model.fit(disp=False)
+    
+    # If train is a DataFrame, convert to Series
+    if isinstance(train, pd.DataFrame):
+        train = train.iloc[:,0]
+
+    model = ARIMA(train, order=order)
+    res = model.fit()
+
     joblib.dump(res, os.path.join(save_path, name))
     return res
 
-def forecast_sarima(model_res, steps=30):
-    pred = model_res.get_forecast(steps=steps).predicted_mean
+
+def forecast_arima(model_res, steps=30):
+    """
+    Forecast future values using a trained ARIMA model.
+    """
+    pred = model_res.forecast(steps=steps)
     return pred
