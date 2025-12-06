@@ -29,17 +29,17 @@ from sklearn.preprocessing import MinMaxScaler
 
 def detect_date_column(df):
     for col in df.columns:
-        if "date" in col.lower() or col.lower() in ["timestamp", "datetime"]:
+        if "date" in col.lower() or "time" in col.lower():
             return col
-    return None
+    return df.columns[0]  # fallback
 
 def detect_price_column(df):
-    candidates = ["Close", "close", "Price", "Adj Close"]
+    candidates = ["Close", "close", "Price", "Adj Close", "Close Price"]
     for c in candidates:
         if c in df.columns:
             return c
-    numeric_cols = df.select_dtypes(include="number").columns
-    return numeric_cols[-1]
+    numeric = df.select_dtypes(include="number").columns
+    return numeric[-1]  # fallback
 
 def plot_series(train, test, preds, title):
     fig, ax = plt.subplots(figsize=(10, 4))
@@ -60,14 +60,13 @@ def plot_series(train, test, preds, title):
 # Streamlit UI
 # -------------------------------------------------
 
-st.set_page_config(page_title="Stock Forecasting Dashboard", layout="wide")
-st.title("📈 Time Series Forecasting Dashboard (Upload CSV Only)")
+st.set_page_config(page_title="Time Series Forecasting Dashboard", layout="wide")
+st.title("📈 Time Series Forecasting Dashboard (Upload CSV)")
 
-# Upload CSV
 st.sidebar.header("📁 Upload CSV File")
 uploaded = st.sidebar.file_uploader("Upload your dataset", type=["csv"])
 
-if not uploaded:
+if uploaded is None:
     st.warning("Please upload a CSV file to continue.")
     st.stop()
 
@@ -77,10 +76,6 @@ df.columns = [c.strip() for c in df.columns]
 
 # Detect columns
 date_col = detect_date_column(df)
-if not date_col:
-    st.error("No date column found. Please include a column named Date/Datetime.")
-    st.stop()
-
 df[date_col] = pd.to_datetime(df[date_col])
 df.set_index(date_col, inplace=True)
 
@@ -88,21 +83,23 @@ price_col = detect_price_column(df)
 series = df[price_col]
 series.name = price_col
 
-# Show preview
+# Preview
 with st.expander("📊 Data Preview", expanded=True):
     st.dataframe(df.tail())
+
     fig, ax = plt.subplots(figsize=(10, 3))
     series.plot(ax=ax)
     ax.set_title("Price Series")
     st.pyplot(fig)
     plt.close(fig)
 
-# Prepare data
+# Prepare daily aggregated series
 series = prepare_series(df, col=price_col, freq="D")
 train, test = train_test_split_series(series, test_size=0.2)
 
+
 # -------------------------------------------------
-# Model Selection
+# Sidebar — Model Settings
 # -------------------------------------------------
 
 st.sidebar.header("🧠 Models")
@@ -114,14 +111,14 @@ models_to_run = st.sidebar.multiselect(
 
 st.sidebar.markdown("---")
 
-# ARIMA settings
+# ARIMA
 arima_order = tuple(map(int, st.sidebar.text_input("ARIMA (p,d,q)", "5,1,0").split(",")))
 
-# SARIMA settings
+# SARIMA
 sarima_order = tuple(map(int, st.sidebar.text_input("SARIMA (p,d,q)", "1,1,1").split(",")))
 sarima_seasonal = tuple(map(int, st.sidebar.text_input("Seasonal (P,D,Q,s)", "1,1,1,12").split(",")))
 
-# LSTM settings
+# LSTM
 lstm_seq = st.sidebar.number_input("LSTM Sequence Length", 10, 200, 60)
 lstm_epochs = st.sidebar.number_input("LSTM Epochs", 1, 50, 5)
 lstm_batch = st.sidebar.number_input("LSTM Batch Size", 1, 256, 32)
@@ -129,6 +126,37 @@ lstm_batch = st.sidebar.number_input("LSTM Batch Size", 1, 256, 32)
 run_btn = st.sidebar.button("Run Models")
 
 col1, col2 = st.columns(2)
+
+
+# -------------------------------------------------
+# Model Execution Functions
+# -------------------------------------------------
+
+def run_arima_forecast():
+    model = train_arima(train.squeeze(), order=arima_order)
+    pred = forecast_arima(model, len(test))
+    return pd.Series(pred, index=test.index)
+
+def run_sarima_forecast():
+    model = train_sarima(train.squeeze(), order=sarima_order, seasonal_order=sarima_seasonal)
+    pred = forecast_sarima(model, len(test))
+    return pd.Series(pred, index=test.index)
+
+def run_prophet_forecast():
+    series_for_prophet = train.squeeze()
+    model = train_prophet(series_for_prophet)
+    pred = forecast_prophet(model, len(test))
+    return pred.reindex(test.index)  # align with test index
+
+def run_lstm_forecast():
+    scaler = MinMaxScaler()
+    scaled = scaler.fit_transform(series.values.reshape(-1,1))
+    split = int(len(scaled)*0.8)
+    train_scaled = scaled[:split]
+    lstm_model = train_lstm(train_scaled, seq_len=lstm_seq, epochs=lstm_epochs, batch_size=lstm_batch)
+    pred = forecast_lstm(lstm_model, scaled, scaler, seq_len=lstm_seq, steps=len(test))
+    return pd.Series(pred, index=test.index)
+
 
 # -------------------------------------------------
 # Run Models
@@ -139,42 +167,31 @@ if run_btn:
     # ARIMA
     if "ARIMA" in models_to_run:
         with st.spinner("Running ARIMA..."):
-            arima_model = train_arima(train, order=arima_order)
-            arima_pred = pd.Series(forecast_arima(arima_model, len(test)), index=test.index)
-            buf = plot_series(train, test, arima_pred, "ARIMA Forecast")
+            pred = run_arima_forecast()
+            buf = plot_series(train, test, pred, "ARIMA Forecast")
             col1.subheader("ARIMA Forecast")
             col1.image(buf)
 
     # SARIMA
     if "SARIMA" in models_to_run:
         with st.spinner("Running SARIMA..."):
-            sarima_model = train_sarima(train, order=sarima_order, seasonal_order=sarima_seasonal)
-            sarima_pred = pd.Series(forecast_sarima(sarima_model, len(test)), index=test.index)
-            buf = plot_series(train, test, sarima_pred, "SARIMA Forecast")
+            pred = run_sarima_forecast()
+            buf = plot_series(train, test, pred, "SARIMA Forecast")
             col1.subheader("SARIMA Forecast")
             col1.image(buf)
 
     # Prophet
     if "Prophet" in models_to_run:
         with st.spinner("Running Prophet..."):
-            prophet_model = train_prophet(train)
-            prophet_pred = forecast_prophet(prophet_model, periods=len(test))
-            prophet_pred = pd.Series(prophet_pred.values, index=test.index)
-            buf = plot_series(train, test, prophet_pred, "Prophet Forecast")
+            pred = run_prophet_forecast()
+            buf = plot_series(train, test, pred, "Prophet Forecast")
             col2.subheader("Prophet Forecast")
             col2.image(buf)
 
     # LSTM
     if "LSTM" in models_to_run:
         with st.spinner("Running LSTM..."):
-            scaler = MinMaxScaler()
-            scaled = scaler.fit_transform(series.values.reshape(-1,1))
-            train_scaled = scaled[: int(len(scaled)*0.8) ]
-
-            lstm_model = train_lstm(train_scaled, seq_len=lstm_seq, epochs=lstm_epochs, batch_size=lstm_batch)
-            lstm_pred = forecast_lstm(lstm_model, scaled, scaler, seq_len=lstm_seq, steps=len(test))
-            lstm_pred = pd.Series(lstm_pred, index=test.index)
-
-            buf = plot_series(train, test, lstm_pred, "LSTM Forecast")
+            pred = run_lstm_forecast()
+            buf = plot_series(train, test, pred, "LSTM Forecast")
             col2.subheader("LSTM Forecast")
             col2.image(buf)
