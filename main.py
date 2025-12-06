@@ -26,6 +26,8 @@ import streamlit.components.v1 as components
 # --------------------------
 # APPLY DARK GLASSMORPHISM THEME
 # PARTICLE BACKGROUND (STYLE A)
+import streamlit.components.v1 as components
+
 particle_html = """
 <canvas id="particles"></canvas>
 
@@ -124,6 +126,7 @@ animate();
 """
 
 components.html(particle_html, height=0, width=0)
+
 # --------------------------
 # METRIC FUNCTIONS
 # --------------------------
