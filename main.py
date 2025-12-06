@@ -33,6 +33,30 @@ except Exception as e:
     PROPHET_ERROR = str(e)
 
 # --------------------------
+# COLORFUL BUTTON STYLING
+# --------------------------
+st.markdown("""
+<style>
+.stButton button {
+    background: linear-gradient(135deg, #1e3c72, #2a5298);
+    color: white;
+    padding: 10px 18px;
+    border-radius: 10px;
+    border: none;
+    font-weight: 600;
+}
+.stDownloadButton button {
+    background: linear-gradient(135deg, #ff9900, #ffcc00);
+    color: black;
+    padding: 8px 14px;
+    border-radius: 10px;
+    border: none;
+    font-weight: 700;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# --------------------------
 # METRIC FUNCTIONS
 # --------------------------
 def RMSE(a, p): return np.sqrt(mean_squared_error(a, p))
@@ -103,8 +127,7 @@ def create_radar_chart(df):
     ax = fig.add_subplot(111, polar=True)
 
     for idx in norm.index:
-        values = norm.loc[idx].tolist()
-        values += values[:1]
+        values = norm.loc[idx].tolist() + [norm.loc[idx].tolist()[0]]
         ax.plot(angles, values, label=idx)
         ax.fill(angles, values, alpha=0.15)
 
@@ -136,7 +159,6 @@ df = df.set_index(date_col)
 price_col = detect_price_column(df)
 series = df[price_col]
 
-# Preview
 st.subheader("📊 Data Preview")
 st.dataframe(df.tail())
 
@@ -157,10 +179,8 @@ if not PROPHET_AVAILABLE:
 
 # Hyperparameters
 def parse_nums(txt, n):
-    try:
-        return tuple([int(x) for x in txt.split(",")][:n])
-    except:
-        return (1, 1, 1)[:n]
+    try: return tuple([int(x) for x in txt.split(",")][:n])
+    except: return (1, 1, 1)[:n]
 
 arima_order = parse_nums(st.sidebar.text_input("ARIMA (p,d,q)", "5,1,0"), 3)
 sarima_order = parse_nums(st.sidebar.text_input("SARIMA (p,d,q)", "1,1,1"), 3)
@@ -190,11 +210,7 @@ if run:
             pred = pd.Series(fc, index=test.index)
 
             combined["ARIMA"] = pred
-            scores["ARIMA"] = {
-                "RMSE": RMSE(test, pred),
-                "MSE": MSE(test, pred),
-                "MAPE": MAPE(test, pred)
-            }
+            scores["ARIMA"] = {"RMSE": RMSE(test, pred), "MSE": MSE(test, pred), "MAPE": MAPE(test, pred)}
 
             col1.subheader("ARIMA")
             col1.image(plot_series_buf(train, test, pred, "ARIMA Forecast"))
@@ -207,30 +223,21 @@ if run:
             pred = pd.Series(fc, index=test.index)
 
             combined["SARIMA"] = pred
-            scores["SARIMA"] = {
-                "RMSE": RMSE(test, pred),
-                "MSE": MSE(test, pred),
-                "MAPE": MAPE(test, pred)
-            }
+            scores["SARIMA"] = {"RMSE": RMSE(test, pred), "MSE": MSE(test, pred), "MAPE": MAPE(test, pred)}
 
             col1.subheader("SARIMA")
             col1.image(plot_series_buf(train, test, pred, "SARIMA Forecast"))
 
-    # PROPHET (only if available)
+    # PROPHET
     if "Prophet" in models and PROPHET_AVAILABLE:
         with st.spinner("Running Prophet..."):
             try:
                 pr = train_prophet(train.squeeze())
                 fc = forecast_prophet(pr, len(test)).reindex(test.index)
-
                 pred = pd.Series(fc.values, index=test.index)
 
                 combined["Prophet"] = pred
-                scores["Prophet"] = {
-                    "RMSE": RMSE(test, pred),
-                    "MSE": MSE(test, pred),
-                    "MAPE": MAPE(test, pred)
-                }
+                scores["Prophet"] = {"RMSE": RMSE(test, pred), "MSE": MSE(test, pred), "MAPE": MAPE(test, pred)}
 
                 col2.subheader("Prophet")
                 col2.image(plot_series_buf(train, test, pred, "Prophet Forecast"))
@@ -242,40 +249,41 @@ if run:
         with st.spinner("Running LSTM..."):
             sc = MinMaxScaler()
             scaled = sc.fit_transform(series.values.reshape(-1, 1))
-
             split = int(len(scaled) * 0.8)
             train_scaled = scaled[:split]
 
             lstm = train_lstm(train_scaled, seq_len=lstm_seq, epochs=lstm_ep, batch_size=lstm_bs)
             fc = forecast_lstm(lstm, scaled, sc, seq_len=lstm_seq, steps=len(test))
-
             pred = pd.Series(fc, index=test.index)
 
             combined["LSTM"] = pred
-            scores["LSTM"] = {
-                "RMSE": RMSE(test, pred),
-                "MSE": MSE(test, pred),
-                "MAPE": MAPE(test, pred)
-            }
+            scores["LSTM"] = {"RMSE": RMSE(test, pred), "MSE": MSE(test, pred), "MAPE": MAPE(test, pred)}
 
             col2.subheader("LSTM")
             col2.image(plot_series_buf(train, test, pred, "LSTM Forecast"))
 
-    # Combined chart
-    if combined:
-        st.subheader("📌 Combined Forecast Chart")
-        st.image(plot_combined_chart(train, test, combined))
+# --------------------------
+# COMBINED CHART & METRICS
+# --------------------------
+if combined:
+    st.subheader("📌 Combined Forecast Chart")
+    buf = plot_combined_chart(train, test, combined)
+    st.image(buf)
 
-    # Metrics
-    if scores:
-        st.subheader("📈 Model Performance Metrics")
-        dfm = pd.DataFrame(scores).T.sort_values("RMSE")
-        dfm["Rank"] = range(1, len(dfm) + 1)
+    st.download_button("Download Combined Chart", buf.getvalue(),
+                       "combined_chart.png", "image/png")
 
-        st.dataframe(dfm)
+if scores:
+    st.subheader("📈 Model Performance Metrics")
+    dfm = pd.DataFrame(scores).T.sort_values("RMSE")
+    dfm["Rank"] = range(1, len(dfm) + 1)
+    st.dataframe(dfm)
 
-        st.success(f"🏆 Best Model: {dfm.index[0]}")
+    st.success(f"🏆 Best Model: {dfm.index[0]}")
 
-        # Radar chart
-        st.subheader("Radar Chart")
-        st.image(create_radar_chart(dfm))
+    radar = create_radar_chart(dfm)
+    st.subheader("📊 Radar Chart")
+    st.image(radar)
+
+    st.download_button("Download Radar Chart", radar.getvalue(),
+                       "radar_chart.png", "image/png")
