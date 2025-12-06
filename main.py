@@ -57,7 +57,6 @@ def detect_price_column(df):
     for c in candidates:
         if c in df.columns:
             return c
-    # fallback → last numeric column
     numeric_cols = df.select_dtypes(include="number").columns
     return numeric_cols[-1] if len(numeric_cols) else None
 
@@ -101,7 +100,7 @@ data_source = st.sidebar.radio(
 
 df = None
 
-# ——— CASE 1: YFINANCE ———
+# CASE 1 — YFINANCE
 if data_source == "YFinance":
     ticker = st.sidebar.text_input("Ticker", "ADANIPORTS.NS")
     start = st.sidebar.date_input("Start date", dt.date(2015,1,1))
@@ -110,7 +109,7 @@ if data_source == "YFinance":
     df = cached_download(ticker, start.isoformat(), end.isoformat())
     st.success(f"Loaded YFinance dataset for {ticker}")
 
-# ——— CASE 2: Upload CSV ———
+# CASE 2 — UPLOAD CSV
 elif data_source == "Upload CSV":
     uploaded = st.sidebar.file_uploader("Upload your CSV file", type=["csv"])
     if uploaded:
@@ -120,13 +119,13 @@ elif data_source == "Upload CSV":
         st.info("Upload a CSV file to continue.")
         st.stop()
 
-# ——— CASE 3: Enter CSV Path ———
+# CASE 3 — ENTER CSV PATH
 elif data_source == "Enter CSV Path":
     path = st.sidebar.text_input("Full CSV path", "")
     if path.strip():
         try:
             df = pd.read_csv(path)
-            st.success(f"Loaded file: {path}")
+            st.success(f"Loaded dataset from: {path}")
         except Exception as e:
             st.error(f"Could not load file: {e}")
             st.stop()
@@ -136,20 +135,21 @@ elif data_source == "Enter CSV Path":
 
 
 # -------------------------
-# STOP if df is STILL None
+# STOP HERE IF df IS NONE (THE FIX)
 # -------------------------
 if df is None:
-    st.error("No dataset loaded. Please select a data source.")
+    st.error("No dataset loaded! Please choose or upload a dataset.")
     st.stop()
 
+
 # -------------------------
-# CLEAN DATAFRAME
+# SAFE TO PROCESS df NOW
 # -------------------------
 df.columns = [c.strip() for c in df.columns]
 
 date_col = detect_date_column(df)
 if date_col is None:
-    st.error("Could not determine the Date column in your dataset.")
+    st.error("Could not detect a Date column in your dataset.")
     st.stop()
 
 df[date_col] = pd.to_datetime(df[date_col])
@@ -157,11 +157,12 @@ df.set_index(date_col, inplace=True)
 
 price_col = detect_price_column(df)
 if price_col is None:
-    st.error("Could not determine price column. Must contain Close / Price column.")
+    st.error("Could not detect a Price column (Close / Price) in your dataset.")
     st.stop()
 
 series = df[price_col]
 series.name = price_col
+
 
 # -------------------------
 # PREVIEW SECTION
@@ -175,14 +176,16 @@ with st.expander("📊 Dataset Preview", expanded=True):
     st.pyplot(fig)
     plt.close(fig)
 
+
 # -------------------------
-# Prepare series for models
+# Prepare series
 # -------------------------
 series = prepare_series(df, col=price_col, freq="D")
 train, test = train_test_split_series(series, test_size=0.2)
 
+
 # -------------------------
-# SIDEBAR — MODEL SELECTION
+# MODELS
 # -------------------------
 st.sidebar.header("🧠 Models")
 
@@ -194,8 +197,6 @@ model_options = st.sidebar.multiselect(
 
 run_btn = st.sidebar.button("Run Models")
 
-# Hyperparameters
-st.sidebar.markdown("---")
 sarima_order = tuple(map(int, st.sidebar.text_input("SARIMA (p,d,q)", "1,1,1").split(",")))
 sarima_seasonal = tuple(map(int, st.sidebar.text_input("Seasonal (P,D,Q,s)", "1,1,1,12").split(",")))
 
@@ -209,7 +210,7 @@ col_left, col_right = st.columns(2)
 
 
 # -------------------------
-# MODEL RUN FUNCTIONS
+# RUN MODEL FUNCTIONS
 # -------------------------
 def run_arima():
     train_series = train if isinstance(train, pd.Series) else train.iloc[:,0]
@@ -240,36 +241,36 @@ def run_lstm_model():
 
 
 # -------------------------
-# RUN MODELS
+# RUN SELECTED MODELS
 # -------------------------
 if run_btn:
     if "ARIMA" in model_options:
         if HAVE_ARIMA:
             with st.spinner("Running ARIMA..."):
-                pred = run_arima()
-                buf = plot_series_inline(train, test, pred, "ARIMA Forecast")
                 col_left.subheader("ARIMA Forecast")
+                pred = run_arima()
+                buf = plot_series_inline(train, test, pred, "ARIMA")
                 col_left.image(buf)
         else:
-            st.error("ARIMA model script missing.")
+            st.error("ARIMA model not available.")
 
     if "SARIMA" in model_options:
         with st.spinner("Running SARIMA..."):
-            pred = run_sarima()
-            buf = plot_series_inline(train, test, pred, "SARIMA Forecast")
             col_left.subheader("SARIMA Forecast")
+            pred = run_sarima()
+            buf = plot_series_inline(train, test, pred, "SARIMA")
             col_left.image(buf)
 
     if "Prophet" in model_options:
         with st.spinner("Running Prophet..."):
-            pred = run_prophet_model()
-            buf = plot_series_inline(train, test, pred, "Prophet Forecast")
             col_right.subheader("Prophet Forecast")
+            pred = run_prophet_model()
+            buf = plot_series_inline(train, test, pred, "Prophet")
             col_right.image(buf)
 
     if "LSTM" in model_options:
         with st.spinner("Running LSTM..."):
-            pred = run_lstm_model()
-            buf = plot_series_inline(train, test, pred, "LSTM Forecast")
             col_right.subheader("LSTM Forecast")
+            pred = run_lstm_model()
+            buf = plot_series_inline(train, test, pred, "LSTM")
             col_right.image(buf)
