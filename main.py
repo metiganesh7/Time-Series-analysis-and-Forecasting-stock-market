@@ -49,6 +49,21 @@ def calculate_target_stop(price, signal, target_pct=5, stop_pct=3):
     return target, stop
 
 # =========================
+# ✅ POSITION SIZING
+# =========================
+def calculate_position_size(capital, entry_price, stop_price, risk_percent=1):
+    risk_amount = capital * (risk_percent / 100)
+    per_share_risk = abs(entry_price - stop_price)
+
+    if per_share_risk == 0:
+        return 0, 0, 0
+
+    quantity = int(risk_amount / per_share_risk)
+    position_value = quantity * entry_price
+
+    return quantity, position_value, risk_amount
+
+# =========================
 # ✅ BACKTESTING
 # =========================
 def backtest_strategy(series):
@@ -78,7 +93,7 @@ def backtest_strategy(series):
     return equity, total_return, win_rate, drawdown
 
 # =========================
-# ✅ UI SETUP
+# ✅ UI
 # =========================
 st.set_page_config(page_title="Stock Forecasting Pro", layout="wide")
 st.title("📊 Stock Forecasting + Trading Strategy Platform")
@@ -113,12 +128,12 @@ def plot_series(train, test, pred, title):
     return buf
 
 # =========================
-# ✅ FILE UPLOAD
+# ✅ CSV UPLOAD
 # =========================
 file = st.file_uploader("📂 Upload Stock CSV", type=["csv"])
 
 if not file:
-    st.info("Please upload a CSV file to continue.")
+    st.info("Upload a CSV to continue.")
     st.stop()
 
 df = pd.read_csv(file)
@@ -151,11 +166,12 @@ if st.button("🚀 Run All Models"):
     metrics = {}
     errors = {}
 
+    future_index = pd.date_range(series.index[-1] + pd.Timedelta(days=1), periods=horizon)
+
     # ---------- ARIMA ----------
     try:
         arima = train_arima(train, order=(5,1,0))
         future = forecast_arima(arima, horizon)
-        future_index = pd.date_range(series.index[-1] + pd.Timedelta(days=1), periods=horizon)
         preds["ARIMA"] = pd.Series(future, index=future_index)
         st.success("✅ ARIMA OK")
     except Exception as e:
@@ -199,25 +215,8 @@ if st.button("🚀 Run All Models"):
         st.stop()
 
     # =========================
-    # ✅ INDIVIDUAL FORECASTS
-    # =========================
-    st.subheader("📊 Individual Model Forecasts")
-
-    for name, p in preds.items():
-        img = plot_series(train, test, p, name)
-        st.image(img)
-        st.download_button(
-            f"⬇ Download {name} Forecast",
-            img.getvalue(),
-            f"{name}_forecast.png",
-            "image/png"
-        )
-
-    # =========================
     # ✅ MODEL ACCURACY
     # =========================
-    st.subheader("📈 Model Accuracy")
-
     for name, p in preds.items():
         align = min(len(test), len(p))
         rmse = np.sqrt(mean_squared_error(test.values[:align], p.values[:align]))
@@ -232,21 +231,13 @@ if st.button("🚀 Run All Models"):
 
     metrics_df = pd.DataFrame(metrics).T
     metrics_df["Rank"] = metrics_df["RMSE"].rank()
+    st.subheader("📈 Model Accuracy")
     st.dataframe(metrics_df)
-
-    csv_metrics = metrics_df.to_csv().encode("utf-8")
-    st.download_button(
-        "⬇ Download Model Accuracy CSV",
-        csv_metrics,
-        "model_accuracy.csv",
-        "text/csv"
-    )
 
     # =========================
     # ✅ COMBINED FORECAST
     # =========================
     st.subheader("📊 Combined Forecast")
-
     fig, ax = plt.subplots(figsize=(12,5))
     series.plot(ax=ax, label="Actual")
 
@@ -258,14 +249,7 @@ if st.button("🚀 Run All Models"):
     fig.savefig(buf, format="png")
     buf.seek(0)
     plt.close()
-
     st.image(buf)
-    st.download_button(
-        "⬇ Download Combined Forecast",
-        buf.getvalue(),
-        "combined_forecast.png",
-        "image/png"
-    )
 
     # =========================
     # ✅ BUY / SELL + TARGET / STOP
@@ -287,6 +271,24 @@ if st.button("🚀 Run All Models"):
             col2.metric("Target", f"{target:.2f}")
             col3.metric("Stop Loss", f"{stop:.2f}")
 
+            # ✅ POSITION SIZING UI
+            st.markdown("### 💼 Position Sizing")
+
+            capital = st.number_input("Trading Capital", 1000, 10_000_000, 100000, step=1000)
+            risk_percent = st.slider("Risk Per Trade (%)", 0.5, 5.0, 1.0, step=0.5)
+
+            qty, pos_value, risk_amt = calculate_position_size(
+                capital=capital,
+                entry_price=last_price,
+                stop_price=stop,
+                risk_percent=risk_percent
+            )
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Quantity (Shares)", qty)
+            c2.metric("Position Value", f"{pos_value:,.0f}")
+            c3.metric("Max Risk", f"{risk_amt:,.0f}")
+
     # =========================
     # ✅ BACKTESTING
     # =========================
@@ -301,9 +303,6 @@ if st.button("🚀 Run All Models"):
 
     st.line_chart(equity)
 
-    # =========================
-    # ✅ MODEL ERRORS
-    # =========================
     if len(errors) > 0:
         st.subheader("⚠ Model Errors")
         for k, v in errors.items():
