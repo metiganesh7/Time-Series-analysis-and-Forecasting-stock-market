@@ -9,7 +9,7 @@ SCRIPTS_DIR = os.path.join(BASE_DIR, "scripts")
 if SCRIPTS_DIR not in sys.path:
     sys.path.append(SCRIPTS_DIR)
 
-# Import model scripts
+# Import model scripts (must exist in scripts/)
 from scripts.utils import prepare_series, train_test_split_series
 from scripts.arima_model import train_arima, forecast_arima
 from scripts.sarima_model import train_sarima, forecast_sarima
@@ -22,22 +22,22 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
-import streamlit.components.v1 as components
-# --------------------------
-# APPLY DARK GLASSMORPHISM THEME
-# PARTICLE BACKGROUND (STYLE A)
 
+# --------------------------
+# THEME + RELIABLE ANIMATED BACKGROUND (CSS ONLY)
+# --------------------------
 st.markdown("""
 <style>
-/* ---------- Full-page animated background (CSS only) ---------- */
+/* Base */
 .stApp {
-  position: relative;
-  overflow: hidden;
-  background: radial-gradient(circle at 10% 10%, #061226 0%, #02040a 35%, #02030a 100%);
-  color: #e6eef8;
+    position: relative;
+    overflow: hidden;
+    background: radial-gradient(circle at 10% 10%, #061226 0%, #02040a 35%, #02030a 100%);
+    color: #e6eef8;
+    font-family: 'Poppins', sans-serif;
 }
 
-/* layered particle fields using radial-gradients */
+/* Particle-like layered animated blobs (CSS-only, reliable) */
 .stApp::before{
   content: "";
   position: fixed;
@@ -56,7 +56,6 @@ st.markdown("""
   pointer-events: none;
 }
 
-/* subtle additional moving layer */
 .stApp::after{
   content: "";
   position: fixed;
@@ -108,18 +107,7 @@ st.markdown("""
   100% { transform: translateY(0px); }
 }
 
-/* optional glow for images and charts */
-img, .stImage, .element-container img {
-  box-shadow: 0 10px 30px rgba(0,210,255,0.08);
-  border-radius: 12px;
-  transition: transform 0.25s, box-shadow 0.25s;
-}
-img:hover, .stImage:hover {
-  transform: translateY(-6px) scale(1.01);
-  box-shadow: 0 20px 60px rgba(0,210,255,0.14);
-}
-
-/* keep content readable */
+/* readable content card */
 .block-container {
   backdrop-filter: blur(6px) saturate(1.1);
   background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
@@ -127,7 +115,24 @@ img:hover, .stImage:hover {
   border: 1px solid rgba(255,255,255,0.03);
 }
 
-/* small performance note */
+/* Buttons and download buttons */
+.stButton button {
+  background: linear-gradient(135deg, #6a11cb, #00d4ff);
+  color: white;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: none;
+  font-weight: 600;
+}
+.stDownloadButton button {
+  background: linear-gradient(135deg, #ffbe0b, #fb5607);
+  color: black;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-weight: 700;
+}
+
+/* small screens: reduce animations for perf */
 @media (max-width: 600px) {
   .stApp::before, .stApp::after { display: none; }
 }
@@ -135,6 +140,7 @@ img:hover, .stImage:hover {
 
 <div class="grid"></div>
 """, unsafe_allow_html=True)
+
 # --------------------------
 # METRIC FUNCTIONS
 # --------------------------
@@ -155,7 +161,7 @@ def MAPE(actual, predicted):
 
 
 # --------------------------
-# BASIC HELPERS
+# HELPERS
 # --------------------------
 def detect_date_column(df):
     for col in df.columns:
@@ -173,7 +179,6 @@ def detect_price_column(df):
         raise ValueError("No numeric columns found")
     return numeric[-1]
 
-
 def plot_series_buf(train, test, pred, title):
     fig, ax = plt.subplots(figsize=(10,4))
     train.plot(ax=ax, label="Train")
@@ -181,34 +186,32 @@ def plot_series_buf(train, test, pred, title):
     pred.plot(ax=ax, label="Forecast")
     ax.set_title(title)
     ax.legend()
-
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight")
     buf.seek(0)
     plt.close(fig)
     return buf
-
 
 def plot_combined_chart(train, test, combined_predictions):
     fig, ax = plt.subplots(figsize=(12,5))
     train.plot(ax=ax, label="Train", linewidth=2)
     test.plot(ax=ax, label="Test", linewidth=2)
     for name, fc in combined_predictions.items():
-        fc.plot(ax=ax, label=name, linewidth=2)
+        try:
+            fc.plot(ax=ax, label=name, linewidth=2)
+        except Exception:
+            ax.plot(fc.index, fc.values, label=name, linewidth=2)
     ax.set_title("Model Comparison Chart")
     ax.legend()
-
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight")
     buf.seek(0)
     plt.close(fig)
     return buf
 
-
 def create_radar_chart(metrics_df):
     df = metrics_df[["RMSE","MSE","MAPE"]].copy()
-    norm = pd.DataFrame(index=df.index, columns=df.columns)
-
+    norm = pd.DataFrame(index=df.index, columns=df.columns, dtype=float)
     for col in df.columns:
         vals = df[col].values.astype(float)
         mn, mx = vals.min(), vals.max()
@@ -216,52 +219,61 @@ def create_radar_chart(metrics_df):
             norm[col] = 1.0
         else:
             norm[col] = (mx - vals) / (mx - mn)
-
     labels = list(norm.columns)
     angles = np.linspace(0, 2*np.pi, len(labels), endpoint=False).tolist()
     angles += angles[:1]
-
     fig = plt.figure(figsize=(6,6))
     ax = fig.add_subplot(111, polar=True)
-
     for idx in norm.index:
         values = norm.loc[idx].tolist()
         values += values[:1]
         ax.plot(angles, values, label=idx, linewidth=2)
         ax.fill(angles, values, alpha=0.15)
-
     ax.set_thetagrids(np.degrees(angles[:-1]), labels)
     ax.set_ylim(0,1)
     ax.set_title("Model Radar Chart (Higher = Better)")
     ax.legend(loc="upper right", bbox_to_anchor=(1.3,1.1))
-
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight")
     buf.seek(0)
     plt.close(fig)
     return buf
 
-
 # --------------------------
-# STREAMLIT UI LAYOUT
+# UI layout
 # --------------------------
 st.title("📈 Stock Price Forecasting Dashboard")
 
 st.sidebar.header("Upload CSV")
 file = st.sidebar.file_uploader("Upload CSV file", type=["csv"])
-
 if not file:
     st.warning("Upload a CSV to continue.")
     st.stop()
 
-df = pd.read_csv(file)
+# read uploaded dataset
+try:
+    df = pd.read_csv(file)
+except Exception as e:
+    st.error(f"Failed to read CSV: {e}")
+    st.stop()
+
 df.columns = [c.strip() for c in df.columns]
 
-date_col = detect_date_column(df)
-df[date_col] = pd.to_datetime(df[date_col])
-df.set_index(date_col, inplace=True)
+# detect date and price columns
+try:
+    date_col = detect_date_column(df)
+    df[date_col] = pd.to_datetime(df[date_col])
+    df.set_index(date_col, inplace=True)
+except Exception as e:
+    st.error(f"Date column error: {e}")
+    st.stop()
 
-price_col = detect_price_column(df)
+try:
+    price_col = detect_price_column(df)
+except Exception as e:
+    st.error(f"Price column error: {e}")
+    st.stop()
+
 series = df[price_col]
 
 with st.expander("📊 Data Preview", True):
@@ -272,28 +284,44 @@ with st.expander("📊 Data Preview", True):
     st.pyplot(fig)
     plt.close(fig)
 
+# prepare series and train/test split
 series = prepare_series(df, col=price_col, freq="D")
-train, test = train_test_split_series(series, 0.2)
+train, test = train_test_split_series(series, test_size=0.2)
 
-# --------------------------
-# SIDEBAR MODEL CONFIG
-# --------------------------
+# sidebar controls
 st.sidebar.header("Models")
-
 models = st.sidebar.multiselect(
     "Select Models",
     ["ARIMA","SARIMA","Prophet","LSTM"],
     default=["ARIMA","SARIMA","Prophet","LSTM"]
 )
 
-arima_order = tuple(map(int, st.sidebar.text_input("ARIMA (p,d,q)", "5,1,0").split(",")))
+# parse hyperparameters safely
+def parse_tuple_input(s, length=3, default=(1,1,1)):
+    try:
+        parts = [int(x.strip()) for x in s.split(",")]
+        if len(parts) >= length:
+            return tuple(parts[:length])
+        else:
+            # pad with defaults
+            return tuple((parts + list(default))[0:length])
+    except Exception:
+        return default
 
-sarima_order = tuple(map(int, st.sidebar.text_input("SARIMA (p,d,q)", "1,1,1").split(",")))
-seasonal_order = tuple(map(int, st.sidebar.text_input("Seasonal (P,D,Q,s)", "1,1,1,12").split(",")))
+arima_order = parse_tuple_input(st.sidebar.text_input("ARIMA (p,d,q)", "5,1,0"), length=3, default=(5,1,0))
+sarima_order = parse_tuple_input(st.sidebar.text_input("SARIMA (p,d,q)", "1,1,1"), length=3, default=(1,1,1))
+# seasonal expects 4
+try:
+    seasonal_text = st.sidebar.text_input("Seasonal (P,D,Q,s)", "1,1,1,12")
+    seasonal_order = tuple([int(x.strip()) for x in seasonal_text.split(",")][:4])
+    if len(seasonal_order) < 4:
+        seasonal_order = (1,1,1,12)
+except Exception:
+    seasonal_order = (1,1,1,12)
 
 lstm_seq = st.sidebar.number_input("LSTM seq len", 10, 200, 60)
-lstm_epochs = st.sidebar.number_input("Epochs", 1, 50, 5)
-lstm_batch = st.sidebar.number_input("Batch", 1, 256, 32)
+lstm_epochs = st.sidebar.number_input("LSTM epochs", 1, 50, 5)
+lstm_batch = st.sidebar.number_input("LSTM batch", 1, 256, 32)
 
 run = st.sidebar.button("Run Models 🚀")
 
@@ -303,135 +331,114 @@ model_scores = {}
 col1, col2 = st.columns(2)
 
 # --------------------------
-# RUN MODELS
+# Run models
 # --------------------------
 if run:
-
     # ARIMA
     if "ARIMA" in models:
         with st.spinner("Running ARIMA..."):
-            model_res = train_arima(train.squeeze(), order=arima_order)
-            pred_vals = forecast_arima(model_res, len(test))
-            pred = pd.Series(pred_vals, index=test.index)
-
-            combined_predictions["ARIMA"] = pred
-            model_scores["ARIMA"] = {
-                "RMSE": RMSE(test,pred),
-                "MSE": MSE(test,pred),
-                "MAPE": MAPE(test,pred)
-            }
-
-            buf = plot_series_buf(train, test, pred, "ARIMA Forecast")
-            col1.subheader("ARIMA Forecast")
-            col1.image(buf)
+            try:
+                arima_res = train_arima(train.squeeze(), order=arima_order)
+                arima_vals = forecast_arima(arima_res, steps=len(test))
+                pred = pd.Series(arima_vals, index=test.index)
+                combined_predictions["ARIMA"] = pred
+                model_scores["ARIMA"] = {"RMSE": RMSE(test, pred), "MSE": MSE(test, pred), "MAPE": MAPE(test, pred)}
+                buf = plot_series_buf(train, test, pred, "ARIMA Forecast")
+                col1.subheader("ARIMA Forecast")
+                col1.image(buf)
+            except Exception as e:
+                st.error(f"ARIMA error: {e}")
 
     # SARIMA
     if "SARIMA" in models:
         with st.spinner("Running SARIMA..."):
-            model_res = train_sarima(train.squeeze(), order=sarima_order, seasonal_order=seasonal_order)
-            pred_vals = forecast_sarima(model_res, len(test))
-            pred = pd.Series(pred_vals, index=test.index)
+            try:
+                sarima_res = train_sarima(train.squeeze(), order=sarima_order, seasonal_order=seasonal_order)
+                sarima_vals = forecast_sarima(sarima_res, steps=len(test))
+                pred = pd.Series(sarima_vals, index=test.index)
+                combined_predictions["SARIMA"] = pred
+                model_scores["SARIMA"] = {"RMSE": RMSE(test, pred), "MSE": MSE(test, pred), "MAPE": MAPE(test, pred)}
+                buf = plot_series_buf(train, test, pred, "SARIMA Forecast")
+                col1.subheader("SARIMA Forecast")
+                col1.image(buf)
+            except Exception as e:
+                st.error(f"SARIMA error: {e}")
 
-            combined_predictions["SARIMA"] = pred
-            model_scores["SARIMA"] = {
-                "RMSE": RMSE(test,pred),
-                "MSE": MSE(test,pred),
-                "MAPE": MAPE(test,pred)
-            }
-
-            buf = plot_series_buf(train, test, pred, "SARIMA Forecast")
-            col1.subheader("SARIMA Forecast")
-            col1.image(buf)
-
-    # PROPHET
+    # Prophet
     if "Prophet" in models:
         with st.spinner("Running Prophet..."):
-            model_p = train_prophet(train.squeeze())
-            pred_vals = forecast_prophet(model_p, len(test))
-            pred_vals = pred_vals.reindex(test.index)
-            pred = pd.Series(pred_vals.values, index=test.index)
-
-            combined_predictions["Prophet"] = pred
-            model_scores["Prophet"] = {
-                "RMSE": RMSE(test,pred),
-                "MSE": MSE(test,pred),
-                "MAPE": MAPE(test,pred)
-            }
-
-            buf = plot_series_buf(train, test, pred, "Prophet Forecast")
-            col2.subheader("Prophet Forecast")
-            col2.image(buf)
+            try:
+                prophet_input = train.squeeze()
+                prophet_model = train_prophet(prophet_input)
+                prophet_pred_series = forecast_prophet(prophet_model, periods=len(test))
+                prophet_pred_series = prophet_pred_series.reindex(test.index)
+                pred = pd.Series(prophet_pred_series.values, index=test.index)
+                combined_predictions["Prophet"] = pred
+                model_scores["Prophet"] = {"RMSE": RMSE(test, pred), "MSE": MSE(test, pred), "MAPE": MAPE(test, pred)}
+                buf = plot_series_buf(train, test, pred, "Prophet Forecast")
+                col2.subheader("Prophet Forecast")
+                col2.image(buf)
+            except Exception as e:
+                st.error(f"Prophet error: {e}")
 
     # LSTM
     if "LSTM" in models:
         with st.spinner("Running LSTM..."):
-            scaler = MinMaxScaler()
-            scaled = scaler.fit_transform(series.values.reshape(-1,1))
-            split = int(len(scaled)*0.8)
-            train_scaled = scaled[:split]
-
-            lstm_model = train_lstm(train_scaled, seq_len=lstm_seq, epochs=lstm_epochs, batch_size=lstm_batch)
-            pred_vals = forecast_lstm(lstm_model, scaled, scaler, lstm_seq, len(test))
-            pred = pd.Series(pred_vals, index=test.index)
-
-            combined_predictions["LSTM"] = pred
-            model_scores["LSTM"] = {
-                "RMSE": RMSE(test,pred),
-                "MSE": MSE(test,pred),
-                "MAPE": MAPE(test,pred)
-            }
-
-            buf = plot_series_buf(train, test, pred, "LSTM Forecast")
-            col2.subheader("LSTM Forecast")
-            col2.image(buf)
-
+            try:
+                scaler = MinMaxScaler()
+                scaled = scaler.fit_transform(series.values.reshape(-1,1))
+                split = int(len(scaled)*0.8)
+                train_scaled = scaled[:split]
+                lstm_model = train_lstm(train_scaled, seq_len=int(lstm_seq), epochs=int(lstm_epochs), batch_size=int(lstm_batch))
+                lstm_vals = forecast_lstm(lstm_model, scaled, scaler, seq_len=int(lstm_seq), steps=len(test))
+                pred = pd.Series(lstm_vals, index=test.index)
+                combined_predictions["LSTM"] = pred
+                model_scores["LSTM"] = {"RMSE": RMSE(test, pred), "MSE": MSE(test, pred), "MAPE": MAPE(test, pred)}
+                buf = plot_series_buf(train, test, pred, "LSTM Forecast")
+                col2.subheader("LSTM Forecast")
+                col2.image(buf)
+            except Exception as e:
+                st.error(f"LSTM error: {e}")
 
     # --------------------------
-    # COMBINED CHART
+    # Combined chart + download
     # --------------------------
     if combined_predictions:
         st.markdown("---")
         st.subheader("📊 Combined Forecast Chart")
-
         combined_buf = plot_combined_chart(train, test, combined_predictions)
         st.image(combined_buf)
+        st.download_button("Download Combined Chart (PNG)", combined_buf.getvalue(), file_name="combined_chart.png", mime="image/png")
 
-        st.download_button(
-            "Download Combined Chart (PNG)",
-            combined_buf.getvalue(),
-            "combined_chart.png",
-            "image/png"
-        )
-
+        # combined CSV (Actual + forecasts)
+        combined_df = pd.DataFrame(index=test.index)
+        for name, s in combined_predictions.items():
+            combined_df[name] = s.values
+        combined_df["Actual"] = test.values
+        combined_csv = combined_df.reset_index().rename(columns={"index": "Date"}).to_csv(index=False).encode("utf-8")
+        st.download_button("Download Combined Forecasts CSV", combined_csv, file_name="combined_forecasts.csv", mime="text/csv")
 
     # --------------------------
-    # METRICS + RANKING
+    # Metrics + ranking + radar + download
     # --------------------------
     if model_scores:
         st.markdown("---")
         st.subheader("📈 Model Performance Metrics")
-
         metrics_df = pd.DataFrame(model_scores).T
         metrics_df = metrics_df.sort_values("RMSE")
         metrics_df["Rank"] = range(1, len(metrics_df)+1)
-
-        st.dataframe(metrics_df.style.background_gradient(cmap="Blues"))
-
+        st.dataframe(metrics_df.style.background_gradient(cmap="Blues").format({
+            "RMSE": "{:.4f}",
+            "MSE": "{:.4f}",
+            "MAPE": "{:.2f}%"
+        }))
         best = metrics_df.index[0]
         st.success(f"🏆 Best Model: **{best}**")
+        metrics_csv = metrics_df.reset_index().rename(columns={"index":"Model"}).to_csv(index=False).encode("utf-8")
+        st.download_button("Download Metrics CSV", metrics_csv, file_name="metrics.csv", mime="text/csv")
 
-        metrics_csv = metrics_df.to_csv().encode("utf-8")
-        st.download_button("Download Metrics CSV", metrics_csv, "metrics.csv", "text/csv")
-
-
-        # RADAR CHART
-        st.subheader("📡 Radar Chart (Inverted Metrics)")
+        # radar chart
         radar_buf = create_radar_chart(metrics_df)
+        st.subheader("📡 Radar Chart (Inverted Metrics)")
         st.image(radar_buf)
-
-        st.download_button(
-            "Download Radar Chart (PNG)",
-            radar_buf.getvalue(),
-            "radar_chart.png",
-            "image/png"
-        )
+        st.download_button("Download Radar Chart (PNG)", radar_buf.getvalue(), file_name="radar_chart.png", mime="image/png")
