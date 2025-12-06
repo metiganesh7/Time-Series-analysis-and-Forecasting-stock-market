@@ -1,13 +1,12 @@
-
 streamlit
-yfinance
 pandas
 numpy
 matplotlib
 plotly
 scikit-learn
-tensorflow
 statsmodels
+tensorflow
 prophet
 joblib
 nsepython
+requests
