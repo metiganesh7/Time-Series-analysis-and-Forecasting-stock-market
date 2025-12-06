@@ -221,150 +221,142 @@ with tab1:
     # ============================
     if st.button("🚀 Run Forecast Models"):
 
-        preds = {}
-        errors = {}
-        metrics = {}
+     if st.button("🚀 Run Forecast Models"):
 
-        # ============================
-        # ✅ ARIMA
-        # ============================
-        try:
+    preds = {}
+    errors = {}
+    metrics = {}
+
+    st.subheader("🔍 Model Execution Status")
+
+    # ==========================
+    # ✅ ENSURE CLEAN SERIES
+    # ==========================
+    series = series.dropna().astype(float)
+    test = test.astype(float)
+
+    # ==========================
+    # ✅ ARIMA (BASELINE MODEL)
+    # ==========================
+    try:
+        with st.spinner("Running ARIMA..."):
             arima = train_arima(train, order=(5,1,0))
             pred = forecast_arima(arima, len(test))
             preds["ARIMA"] = pd.Series(pred, index=test.index)
-        except Exception as e:
-            errors["ARIMA"] = str(e)
+            st.success("✅ ARIMA ran successfully")
+    except Exception as e:
+        errors["ARIMA"] = str(e)
+        st.error(f"❌ ARIMA failed → {e}")
 
-        # ============================
-        # ✅ SARIMA
-        # ============================
-        try:
+    # ==========================
+    # ✅ SARIMA
+    # ==========================
+    try:
+        with st.spinner("Running SARIMA..."):
             sarima = train_sarima(train)
             pred = forecast_sarima(sarima, len(test))
             preds["SARIMA"] = pd.Series(pred, index=test.index)
-        except Exception as e:
-            errors["SARIMA"] = str(e)
+            st.success("✅ SARIMA ran successfully")
+    except Exception as e:
+        errors["SARIMA"] = str(e)
+        st.error(f"❌ SARIMA failed → {e}")
 
-        # ============================
-        # ✅ PROPHET
-        # ============================
-        try:
+    # ==========================
+    # ✅ PROPHET (OPTIONAL)
+    # ==========================
+    try:
+        with st.spinner("Running Prophet..."):
             prophet = train_prophet(train)
             pvals = forecast_prophet(prophet, len(test))
             preds["Prophet"] = pd.Series(pvals.values, index=test.index)
-        except Exception as e:
-            errors["Prophet"] = str(e)
+            st.success("✅ Prophet ran successfully")
+    except Exception as e:
+        errors["Prophet"] = str(e)
+        st.warning(f"⚠ Prophet skipped → {e}")
 
-        # ============================
-        # ✅ LSTM (Cloud Safe)
-        # ============================
-        try:
+    # ==========================
+    # ✅ LSTM (ULTRA CLOUD SAFE)
+    # ==========================
+    try:
+        with st.spinner("Running LSTM (Safe Mode)..."):
             scaler = MinMaxScaler()
             scaled = scaler.fit_transform(series.values.reshape(-1,1))
-            train_scaled = scaled[:split]
+            train_scaled = scaled[:len(train)]
 
             lstm_model = train_lstm(
                 train_scaled,
-                seq_len=30,
-                epochs=3,
-                batch_size=16
+                seq_len=20,    # reduced load
+                epochs=2,
+                batch_size=8
             )
 
-            lvals = forecast_lstm(lstm_model, scaled, scaler, 30, len(test))
+            lvals = forecast_lstm(lstm_model, scaled, scaler, 20, len(test))
             preds["LSTM"] = pd.Series(lvals, index=test.index)
+            st.success("✅ LSTM ran successfully")
+    except Exception as e:
+        errors["LSTM"] = str(e)
+        st.warning(f"⚠ LSTM skipped → {e}")
 
-        except Exception as e:
-            errors["LSTM"] = str(e)
+    # ==========================
+    # ✅ HARD STOP IF ALL FAILED
+    # ==========================
+    if len(preds) == 0:
+        st.error("❌ ALL MODELS FAILED — NOTHING TO DISPLAY")
+        st.code(errors)
+        st.stop()
 
-        # ============================
-        # ✅ INDIVIDUAL FORECAST PLOTS
-        # ============================
-        if len(preds) == 0:
-            st.error("❌ All models failed.")
-            st.code(errors)
-            st.stop()
+    # ==========================
+    # ✅ FORECAST VISUALS
+    # ==========================
+    st.subheader("📊 Individual Forecast Results")
 
-        st.subheader("📊 Individual Model Forecasts")
+    for name, p in preds.items():
+        img = plot_series(train, test, p, name)
+        st.image(img)
 
-        for name, p in preds.items():
-            img = plot_series(train, test, p, name)
-            st.image(img)
+    # ==========================
+    # ✅ MODEL ACCURACY TABLE
+    # ==========================
+    st.subheader("📈 Model Accuracy")
 
-            st.download_button(
-                f"⬇ Download {name} Forecast",
-                img.getvalue(),
-                f"{name}_forecast.png",
-                "image/png"
-            )
+    for name, p in preds.items():
+        rmse = np.sqrt(mean_squared_error(test, p))
+        mse = mean_squared_error(test, p)
+        mape = np.mean(np.abs((test - p) / test)) * 100
 
-        # ============================
-        # ✅ MODEL ACCURACY TABLE
-        # ============================
-        st.subheader("📈 Model Accuracy (RMSE, MSE, Ranking)")
+        metrics[name] = {
+            "RMSE": rmse,
+            "MSE": mse,
+            "MAPE (%)": mape
+        }
 
-        for name, p in preds.items():
-            rmse = np.sqrt(mean_squared_error(test, p))
-            mse = mean_squared_error(test, p)
-            mape = np.mean(np.abs((test - p) / test)) * 100
+    metrics_df = pd.DataFrame(metrics).T
+    metrics_df["Rank"] = metrics_df["RMSE"].rank()
 
-            metrics[name] = {
-                "RMSE": rmse,
-                "MSE": mse,
-                "MAPE (%)": mape
-            }
+    st.dataframe(metrics_df.style.background_gradient(cmap="Blues"))
 
-        metrics_df = pd.DataFrame(metrics).T
-        metrics_df["Rank"] = metrics_df["RMSE"].rank()
+    best_model = metrics_df.sort_values("RMSE").index[0]
+    st.success(f"🏆 Best Model → {best_model}")
 
-        st.dataframe(metrics_df.style.background_gradient(cmap="Blues"))
+    # ==========================
+    # ✅ COMBINED FORECAST
+    # ==========================
+    st.subheader("📊 Combined Forecast")
 
-        csv_metrics = metrics_df.to_csv().encode("utf-8")
-        st.download_button(
-            "⬇ Download Model Accuracy CSV",
-            csv_metrics,
-            "model_accuracy.csv",
-            "text/csv"
-        )
+    fig, ax = plt.subplots(figsize=(12,5))
+    train.plot(ax=ax, label="Train")
+    test.plot(ax=ax, label="Test")
+    for name, p in preds.items():
+        p.plot(ax=ax, label=name)
+    ax.legend()
 
-        best_model = metrics_df.sort_values("RMSE").index[0]
-        st.success(f"🏆 Best Performing Model: {best_model}")
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    buf.seek(0)
+    plt.close()
 
-        # ============================
-        # ✅ COMBINED FORECAST CHART
-        # ============================
-        st.subheader("📊 Combined Forecast Chart")
+    st.image(buf)
 
-        fig, ax = plt.subplots(figsize=(12,5))
-        train.plot(ax=ax, label="Train")
-        test.plot(ax=ax, label="Test")
-
-        for name, p in preds.items():
-            p.plot(ax=ax, label=name)
-
-        ax.legend()
-        ax.set_title("Combined Forecast Comparison")
-
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png")
-        buf.seek(0)
-        plt.close()
-
-        st.image(buf)
-
-        st.download_button(
-            "⬇ Download Combined Forecast",
-            buf.getvalue(),
-            "combined_forecast.png",
-            "image/png"
-        )
-
-        # ============================
-        # ✅ SHOW MODEL ERRORS
-        # ============================
-        if len(errors) > 0:
-            st.subheader("⚠ Model Errors")
-            for k, v in errors.items():
-                st.code(f"{k} ERROR → {v}")
 
 
 with tab2:
