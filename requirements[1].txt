@@ -1,12 +1,8 @@
-
+streamlit
+yfinance
 pandas
 numpy
 matplotlib
-seaborn
-statsmodels
-prophet
-tensorflow
-keras
+plotly
 scikit-learn
-yfinance
-joblib
+tensorflow
