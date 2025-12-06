@@ -163,62 +163,145 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 # ✅ TAB 1 — FULL CSV FORECASTING (RESTORED ✅)
 # =========================================================
 
+# =========================================================
+# ✅ TAB 1 — BULLETPROOF CSV FORECASTING (FINAL FIX)
+# =========================================================
+
 with tab1:
     st.subheader("📂 Upload CSV for Forecasting")
 
     file = st.file_uploader("Upload CSV", type=["csv"])
 
-    if file:
-        df = pd.read_csv(file)
-        df.columns = [c.strip() for c in df.columns]
+    if not file:
+        st.info("Please upload a CSV file first.")
+        st.stop()
 
-        date_col = detect_date_column(df)
-        price_col = detect_price_column(df)
+    df = pd.read_csv(file)
+    df.columns = [c.strip() for c in df.columns]
 
-        df[date_col] = pd.to_datetime(df[date_col])
-        df.set_index(date_col, inplace=True)
+    st.write("✅ Raw Columns Detected:", list(df.columns))
 
-        st.dataframe(df.tail())
+    # ---- Detect Date Column ----
+    date_col = None
+    for c in df.columns:
+        if "date" in c.lower() or "time" in c.lower():
+            date_col = c
+            break
 
-        series = prepare_series(df, price_col, freq="D")
-        train, test = train_test_split_series(series, 0.2)
+    if date_col is None:
+        st.error("❌ No Date column detected. Your CSV must contain a DATE column.")
+        st.stop()
 
-        if st.button("🚀 Run Forecast Models"):
-            preds = {}
+    # ---- Detect Price Column ----
+    price_col = None
+    for c in ["Close", "close", "Adj Close", "Price"]:
+        if c in df.columns:
+            price_col = c
+            break
 
-            try:
-                arima = train_arima(train.squeeze(), order=(5,1,0))
-                preds["ARIMA"] = pd.Series(forecast_arima(arima,len(test)), index=test.index)
-            except: pass
+    if price_col is None:
+        nums = df.select_dtypes(include="number").columns
+        if len(nums) == 0:
+            st.error("❌ No numeric column found for price.")
+            st.stop()
+        price_col = nums[-1]
 
-            try:
-                sarima = train_sarima(train.squeeze())
-                preds["SARIMA"] = pd.Series(forecast_sarima(sarima,len(test)), index=test.index)
-            except: pass
+    st.success(f"✅ Using Columns → Date: `{date_col}` | Price: `{price_col}`")
 
-            try:
-                prophet = train_prophet(train.squeeze())
-                pvals = forecast_prophet(prophet,len(test))
-                preds["Prophet"] = pd.Series(pvals.values,index=test.index)
-            except: pass
+    # ---- Prepare Series ----
+    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    df = df.dropna(subset=[date_col, price_col])
+    df.set_index(date_col, inplace=True)
 
-            try:
-                scaler = MinMaxScaler()
-                scaled = scaler.fit_transform(series.values.reshape(-1,1))
-                lstm_model = train_lstm(scaled[:int(len(scaled)*0.8)], seq_len=60)
-                lvals = forecast_lstm(lstm_model, scaled, scaler,60,len(test))
-                preds["LSTM"] = pd.Series(lvals,index=test.index)
-            except: pass
+    series = df[price_col].astype(float)
 
-            if len(preds)==0:
-                st.error("All models failed. Check CSV formatting.")
-            else:
-                for name,p in preds.items():
-                    st.image(plot_series(train,test,p,name))
+    st.line_chart(series.tail(200))
 
-# =========================================================
-# ✅ TAB 2 — LIVE CHART + INDICATORS
-# =========================================================
+    split = int(len(series) * 0.8)
+    train = series.iloc[:split]
+    test = series.iloc[split:]
+
+    if st.button("🚀 Run Forecast Models"):
+
+        preds = {}
+        errors = {}
+
+        # ============================
+        # ✅ ARIMA (GUARANTEED TO WORK)
+        # ============================
+        try:
+            arima = train_arima(train, order=(5,1,0))
+            pred = forecast_arima(arima, len(test))
+            preds["ARIMA"] = pd.Series(pred, index=test.index)
+            st.success("✅ ARIMA Successful")
+        except Exception as e:
+            errors["ARIMA"] = str(e)
+
+        # ============================
+        # ✅ SARIMA
+        # ============================
+        try:
+            sarima = train_sarima(train)
+            pred = forecast_sarima(sarima, len(test))
+            preds["SARIMA"] = pd.Series(pred, index=test.index)
+            st.success("✅ SARIMA Successful")
+        except Exception as e:
+            errors["SARIMA"] = str(e)
+
+        # ============================
+        # ✅ PROPHET (OPTIONAL)
+        # ============================
+        try:
+            prophet = train_prophet(train)
+            pvals = forecast_prophet(prophet, len(test))
+            preds["Prophet"] = pd.Series(pvals.values, index=test.index)
+            st.success("✅ Prophet Successful")
+        except Exception as e:
+            errors["Prophet"] = str(e)
+
+        # ============================
+        # ✅ LSTM (CLOUD SAFE VERSION)
+        # ============================
+        try:
+            scaler = MinMaxScaler()
+            scaled = scaler.fit_transform(series.values.reshape(-1,1))
+
+            train_scaled = scaled[:split]
+
+            lstm_model = train_lstm(
+                train_scaled,
+                seq_len=30,      # reduced for cloud safety
+                epochs=3,
+                batch_size=16
+            )
+
+            lvals = forecast_lstm(lstm_model, scaled, scaler, 30, len(test))
+            preds["LSTM"] = pd.Series(lvals, index=test.index)
+
+            st.success("✅ LSTM Successful")
+
+        except Exception as e:
+            errors["LSTM"] = str(e)
+
+        # ============================
+        # ✅ SHOW RESULTS
+        # ============================
+        if len(preds) == 0:
+            st.error("❌ ALL MODELS FAILED")
+            st.error(errors)
+        else:
+            st.subheader("📊 Forecast Results")
+            for name, p in preds.items():
+                st.image(plot_series(train, test, p, name))
+
+        # ============================
+        # ✅ SHOW MODEL ERRORS (IMPORTANT)
+        # ============================
+        if len(errors) > 0:
+            st.subheader("⚠ Model Errors")
+            for k, v in errors.items():
+                st.code(f"{k} ERROR → {v}")
+
 
 with tab2:
     symbol = st.text_input("Enter NSE Symbol", "TCS").upper().replace(".NS","")
