@@ -1,400 +1,434 @@
+# main.py (Optimized, production-ready)
 import sys
 import os
 import io
-import datetime as dt
-
-# Ensure scripts import
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SCRIPTS_DIR = os.path.join(BASE_DIR, "scripts")
-if SCRIPTS_DIR not in sys.path:
-    sys.path.append(SCRIPTS_DIR)
-
-# Model imports
-from scripts.utils import prepare_series, train_test_split_series
-from scripts.arima_model import train_arima, forecast_arima
-from scripts.sarima_model import train_sarima, forecast_sarima
-from scripts.lstm_model import train_lstm, forecast_lstm
-
+from typing import Tuple, Dict
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
-import streamlit.components.v1 as components
 
-# --------------------------
-# SAFE PROPHET IMPORT
-# --------------------------
+# Ensure scripts directory is importable
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SCRIPTS_DIR = os.path.join(BASE_DIR, "scripts")
+if SCRIPTS_DIR not in sys.path:
+    sys.path.append(SCRIPTS_DIR)
+
+# Import model utilities (these are local)
+from scripts.utils import prepare_series, train_test_split_series
+from scripts.arima_model import train_arima, forecast_arima
+from scripts.sarima_model import train_sarima, forecast_sarima
+from scripts.lstm_model import train_lstm, forecast_lstm
+
+# Try Prophet safely
 try:
     from scripts.prophet_model import train_prophet, forecast_prophet
     PROPHET_AVAILABLE = True
-except:
+except Exception:
     PROPHET_AVAILABLE = False
 
 
 # --------------------------
-# PREMIUM UI THEME (CSS)
+# UI THEME (clean & premium)
 # --------------------------
-st.markdown("""
-<style>
-
-html, body, .stApp {
-    background-color: #0A0F1F !important;
-    font-family: 'Poppins', sans-serif;
-    color: #E4E8F0;
-}
-
-.block-container {
-    padding: 2rem 3rem;
-    background: rgba(255,255,255,0.04);
-    border-radius: 20px;
-    border: 1px solid rgba(255,255,255,0.06);
-    box-shadow: 0 8px 40px rgba(0,0,0,0.35);
-}
-
-.sidebar .sidebar-content {
-    background: rgba(255,255,255,0.07) !important;
-    padding-top: 2rem;
-    border-right: 1px solid rgba(255,255,255,0.05);
-}
-
-h1, h2, h3 {
-    color: #E9EDFA !important;
-    font-weight: 600;
-}
-
-/* Buttons */
-.stButton button {
-    background: linear-gradient(135deg, #6B73FF, #000DFF);
-    color: white;
-    padding: 12px 22px;
-    border-radius: 12px;
-    border: none;
-    font-size: 16px;
-    font-weight: 600;
-    transition: 0.25s;
-}
-.stButton button:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 6px 20px rgba(0,0,255,0.5);
-}
-
-/* Download buttons */
-.stDownloadButton button {
-    background: linear-gradient(135deg, #FFB300, #FFDD55);
-    color: black !important;
-    padding: 10px 18px;
-    border-radius: 12px;
-    font-weight: 700;
-    border: none;
-    transition: 0.25s;
-}
-.stDownloadButton button:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 6px 20px rgba(255,200,0,0.5);
-}
-
-.chart-card {
-    background: rgba(255,255,255,0.05);
-    border-radius: 18px;
-    padding: 20px;
-    border: 1px solid rgba(255,255,255,0.1);
-    margin-top: 18px;
-}
-
-</style>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title="Premium Forecast Dashboard", layout="wide")
+st.markdown(
+    """
+    <style>
+    html, body, .stApp { background-color: #0A0F1F !important; color: #E4E8F0; font-family: Poppins, sans-serif; }
+    .block-container { background: rgba(255,255,255,0.03); border-radius: 16px; padding: 18px; border: 1px solid rgba(255,255,255,0.04);}
+    .chart-card { background: rgba(255,255,255,0.04); border-radius: 12px; padding: 14px; border: 1px solid rgba(255,255,255,0.06); }
+    .stButton > button { background: linear-gradient(135deg,#6B73FF,#000DFF); color: white; border-radius: 10px; padding: 8px 14px; font-weight:600; }
+    .stDownloadButton > button { background: linear-gradient(135deg,#FFB300,#FFDD55); color: black; border-radius: 10px; padding: 8px 12px; font-weight:700; }
+    .metric { padding: 10px; border-radius: 8px; background: rgba(255,255,255,0.02); margin-bottom:8px; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # --------------------------
-# METRIC FUNCTIONS
+# Helper metrics & plotting
 # --------------------------
-def RMSE(a,p): return np.sqrt(mean_squared_error(a,p))
-def MSE(a,p): return mean_squared_error(a,p)
-def MAPE(a,p):
-    a=np.array(a); p=np.array(p)
-    a[a==0]=1e-8
-    return np.mean(np.abs((a-p)/a))*100
+def RMSE(a, p): return float(np.sqrt(mean_squared_error(a, p)))
+def MSE(a, p): return float(mean_squared_error(a, p))
+def MAPE(a, p):
+    a = np.array(a, dtype=float)
+    p = np.array(p, dtype=float)
+    a[a == 0] = 1e-8
+    return float(np.mean(np.abs((a - p) / a)) * 100)
 
-# --------------------------
-# HELPERS
-# --------------------------
-def detect_date_column(df):
+def detect_date_column(df: pd.DataFrame) -> str:
     for c in df.columns:
-        if "date" in c.lower(): return c
+        if "date" in c.lower() or "time" in c.lower():
+            return c
+    # fallback to first column
     return df.columns[0]
 
-def detect_price_column(df):
-    for c in ["Close","close","Adj Close","Price","price"]:
-        if c in df.columns: return c
-    return df.select_dtypes("number").columns[-1]
+def detect_price_column(df: pd.DataFrame) -> str:
+    candidates = ["Close", "Adj Close", "close", "price", "Close Price"]
+    for c in candidates:
+        if c in df.columns:
+            return c
+    numeric = df.select_dtypes(include="number").columns
+    if len(numeric) == 0:
+        raise ValueError("No numeric column found to act as price.")
+    return numeric[-1]
 
-def plot_series_buf(train,test,pred,title):
+def plot_series_buf(train: pd.Series, test: pd.Series, pred: pd.Series, title: str) -> io.BytesIO:
     fig, ax = plt.subplots(figsize=(10,4))
-    train.plot(ax=ax,label="Train")
-    test.plot(ax=ax,label="Test")
-    pred.plot(ax=ax,label="Forecast")
-    ax.legend(); ax.set_title(title)
-    buf=io.BytesIO(); fig.savefig(buf,format="png"); buf.seek(0)
+    train.plot(ax=ax, label="Train")
+    test.plot(ax=ax, label="Test")
+    pred.plot(ax=ax, label="Forecast")
+    ax.set_title(title)
+    ax.legend()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    buf.seek(0)
     plt.close(fig)
     return buf
 
-def plot_combined_chart(train,test,preds):
+def plot_combined_buf(train: pd.Series, test: pd.Series, preds: Dict[str, pd.Series]) -> io.BytesIO:
     fig, ax = plt.subplots(figsize=(12,5))
-    train.plot(ax=ax,label="Train",linewidth=2)
-    test.plot(ax=ax,label="Test",linewidth=2)
-    for name,fc in preds.items():
-        ax.plot(fc.index,fc.values,label=name,linewidth=2)
-    ax.legend(); ax.set_title("Combined Forecasts")
-    buf=io.BytesIO(); fig.savefig(buf,format="png"); buf.seek(0)
+    train.plot(ax=ax, label="Train", linewidth=2)
+    test.plot(ax=ax, label="Test", linewidth=2)
+    for name, series in preds.items():
+        ax.plot(series.index, series.values, label=name, linewidth=2)
+    ax.set_title("Combined Model Comparison")
+    ax.legend()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    buf.seek(0)
     plt.close(fig)
     return buf
 
-def create_radar(df):
-    df=df[["RMSE","MSE","MAPE"]].astype(float)
-    norm=(df.max()-df)/(df.max()-df.min()+1e-8)
-    labels=list(norm.columns)
-    angles=np.linspace(0,2*np.pi,len(labels),endpoint=False).tolist()+[0]
-    fig=plt.figure(figsize=(6,6)); ax=fig.add_subplot(111,polar=True)
+def create_radar_buf(metrics_df: pd.DataFrame) -> io.BytesIO:
+    # Invert metrics so smaller is better -> normalize to [0,1]
+    df = metrics_df[["RMSE","MSE","MAPE"]].astype(float)
+    norm = (df.max() - df) / (df.max() - df.min() + 1e-8)
+    labels = list(norm.columns)
+    angles = np.linspace(0, 2*np.pi, len(labels), endpoint=False).tolist()
+    angles += angles[:1]
+    fig = plt.figure(figsize=(6,6))
+    ax = fig.add_subplot(111, polar=True)
     for idx in norm.index:
-        vals=list(norm.loc[idx])+[norm.loc[idx][0]]
-        ax.plot(angles,vals,label=idx,linewidth=2)
-        ax.fill(angles,vals,alpha=0.15)
-    ax.set_thetagrids(np.degrees(angles[:-1]),labels)
-    buf=io.BytesIO()
-    fig.savefig(buf,format="png"); buf.seek(0)
+        vals = norm.loc[idx].tolist()
+        vals += vals[:1]
+        ax.plot(angles, vals, label=idx, linewidth=2)
+        ax.fill(angles, vals, alpha=0.15)
+    ax.set_thetagrids(np.degrees(angles[:-1]), labels)
+    ax.set_title("Model Radar (higher = better)")
+    ax.legend(loc="upper right", bbox_to_anchor=(1.4, 1.15))
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    buf.seek(0)
     plt.close(fig)
     return buf
 
 # --------------------------
-# UI
+# TradingView Dashboard generator
 # --------------------------
-st.title("📈 Premium Stock Forecasting Dashboard")
+def tradingview_dashboard(file_name: str, height_chart: int = 560):
+    # Build TV symbol guess from filename (support "TICKER.NS.csv" or "HDFC.csv")
+    base = os.path.splitext(file_name)[0]
+    if "." in base:
+        tv_symbol = base.upper()
+    else:
+        tv_symbol = base.upper() + ".NS"  # default to NSE
+    # 1) Ticker tape
+    ticker_tape_html = """
+    <div class="tradingview-widget-container">
+      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js">
+      {
+        "symbols": [{"proName":"NSE:NIFTY","title":"NIFTY"},{"proName":"BSE:SENSEX","title":"SENSEX"},{"proName":"CRYPTO:BTCUSD","title":"BTC"}],
+        "colorTheme":"dark",
+        "isTransparent":false,
+        "displayMode":"adaptive"
+      }
+      </script>
+    </div>
+    """
+    components.html(ticker_tape_html, height=80)
 
-file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
-if not file: st.stop()
+    # 2) Advanced chart
+    chart_html = f"""
+    <div class="tradingview-widget-container">
+      <div id="tv_chart"></div>
+      <script src="https://s3.tradingview.com/tv.js"></script>
+      <script>
+      new TradingView.widget({{
+        "width":"100%",
+        "height":{height_chart},
+        "symbol":"{tv_symbol}",
+        "interval":"D",
+        "timezone":"Etc/UTC",
+        "theme":"dark",
+        "style":"1",
+        "locale":"en",
+        "toolbar_bg":"#000000",
+        "enable_publishing":false,
+        "hide_top_toolbar":false,
+        "allow_symbol_change":true,
+        "container_id":"tv_chart"
+      }});
+      </script>
+    </div>
+    """
+    components.html(chart_html, height=height_chart + 20)
 
-df = pd.read_csv(file)
-df.columns=[c.strip() for c in df.columns]
-date_col = detect_date_column(df)
-df[date_col]=pd.to_datetime(df[date_col])
-df=df.set_index(date_col)
+    # 3) Market overview
+    market_html = """
+    <div class="tradingview-widget-container">
+    <script src="https://s3.tradingview.com/external-embedding/embed-widget-market-overview.js">
+    {
+      "colorTheme":"dark",
+      "dateRange":"12M",
+      "showChart":true,
+      "locale":"en",
+      "height":"420",
+      "tabs":[
+        {"title":"Indices","symbols":[{"s":"NSE:NIFTY"},{"s":"BSE:SENSEX"},{"s":"NASDAQ:NDX"}]},
+        {"title":"Crypto","symbols":[{"s":"CRYPTO:BTCUSD"},{"s":"CRYPTO:ETHUSD"}]}
+      ]
+    }
+    </script>
+    </div>
+    """
+    components.html(market_html, height=420)
 
-price_col = detect_price_column(df)
-series = df[price_col]
+    # 4) Technical analysis
+    ta_html = f"""
+    <div class="tradingview-widget-container">
+      <script src="https://s3.tradingview.com/external-embedding/embed-widget-technical-analysis.js">
+      {{
+        "interval":"1D",
+        "width":"100%",
+        "isTransparent":false,
+        "height":360,
+        "symbol":"{tv_symbol}",
+        "showIntervalTabs":true,
+        "colorTheme":"dark",
+        "locale":"en"
+      }}
+      </script>
+    </div>
+    """
+    components.html(ta_html, height=380)
 
-# Preview
-with st.expander("📋 Data Preview", True):
-    st.dataframe(df.tail())
-    fig, ax = plt.subplots(figsize=(10,3))
-    series.plot(ax=ax); st.pyplot(fig); plt.close(fig)
+    # 5) Screener
+    screener_html = """
+    <div class="tradingview-widget-container">
+      <script src="https://s3.tradingview.com/external-embedding/embed-widget-screener.js">
+      {
+        "width":"100%",
+        "height":"520",
+        "defaultColumn":"overview",
+        "defaultScreen":"general",
+        "market":"india",
+        "showToolbar":true,
+        "colorTheme":"dark",
+        "locale":"en"
+      }
+      </script>
+    </div>
+    """
+    st.subheader("📋 TradingView Stock Screener")
+    components.html(screener_html, height=540)
 
-series = prepare_series(df,col=price_col,freq="D")
-train,test = train_test_split_series(series,0.2)
-
-# --------------------------
-# TRADINGVIEW DASHBOARD
-# --------------------------
-st.subheader("📊 TradingView Market Dashboard")
-
-file_name = os.path.splitext(file.name)[0]
-tv_symbol = file_name.upper() if "." in file_name else file_name.upper()+".NS"
-
-# 1️⃣ TICKER TAPE
-ticker = """
-<div class="tradingview-widget-container">
-<script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js">
-{
-"symbols":[
-{"proName":"NSE:NIFTY","title":"NIFTY 50"},
-{"proName":"BSE:SENSEX","title":"SENSEX"},
-{"proName":"CRYPTO:BTCUSD","title":"Bitcoin"},
-{"proName":"CRYPTO:ETHUSD","title":"Ethereum"}
-],
-"colorTheme":"dark",
-"displayMode":"adaptive"
-}
-</script>
-</div>
-"""
-components.html(ticker,height=80)
-
-# 2️⃣ ADVANCED CHART
-chart = f"""
-<div class="tradingview-widget-container">
-<div id="tradingview_chart"></div>
-<script src="https://s3.tradingview.com/tv.js"></script>
-<script>
-new TradingView.widget({{
-"width":"100%",
-"height":550,
-"symbol":"{tv_symbol}",
-"interval":"D",
-"timezone":"Etc/UTC",
-"theme":"dark",
-"style":"1",
-"locale":"en",
-"toolbar_bg":"#000000",
-"hide_top_toolbar":false,
-"allow_symbol_change":true,
-"container_id":"tradingview_chart"
-}});
-</script>
-</div>
-"""
-components.html(chart,height=560)
-
-# 3️⃣ MARKET OVERVIEW
-market = """
-<div class="tradingview-widget-container">
-<script src="https://s3.tradingview.com/external-embedding/embed-widget-market-overview.js">
-{
-"colorTheme":"dark",
-"dateRange":"12M",
-"showChart":true,
-"locale":"en",
-"height":"500",
-"tabs":[
-{"title":"Indices","symbols":[
-{"s":"NSE:NIFTY"},
-{"s":"BSE:SENSEX"},
-{"s":"NASDAQ:NDX"}
-]}
-]}
-</script>
-</div>
-"""
-components.html(market,height=520)
-
-# 4️⃣ TECHNICAL ANALYSIS
-ta = f"""
-<div class="tradingview-widget-container">
-<script src="https://s3.tradingview.com/external-embedding/embed-widget-technical-analysis.js">
-{{
-"symbol":"{tv_symbol}",
-"interval":"1D",
-"height":400,
-"width":"100%",
-"colorTheme":"dark"
-}}
-</script>
-</div>
-"""
-components.html(ta,height=420)
-
-# 5️⃣ STOCK SCREENER
-screener = """
-<div class="tradingview-widget-container">
-<script src="https://s3.tradingview.com/external-embedding/embed-widget-screener.js">
-{
-"width":"100%",
-"height":600,
-"defaultScreen":"general",
-"market":"india",
-"showToolbar":true,
-"colorTheme":"dark",
-"locale":"en"
-}
-</script>
-</div>
-"""
-st.subheader("📋 TradingView Stock Screener")
-components.html(screener,height=620)
 
 # --------------------------
-# MODEL CONFIG
+# App layout and logic
 # --------------------------
-st.sidebar.header("Models")
+def main():
+    st.title("📈 Optimized Forecast Dashboard (Premium UI)")
 
-opts=["ARIMA","SARIMA","LSTM"]
-if PROPHET_AVAILABLE: opts.append("Prophet")
+    # Sidebar uploader
+    st.sidebar.header("Upload & Settings")
+    uploaded = st.sidebar.file_uploader("Upload CSV (one file)", type=["csv"])
+    if uploaded is None:
+        st.sidebar.info("Upload a CSV with Date and Price columns (e.g. Close).")
+        st.stop()
 
-models=st.sidebar.multiselect("Select Models",opts,default=opts)
+    # Read csv robustly
+    try:
+        df = pd.read_csv(uploaded)
+    except Exception as e:
+        st.error(f"Could not read CSV: {e}")
+        st.stop()
 
-def parse(text,n):
-    try: return tuple([int(x) for x in text.split(",")][:n])
-    except: return (1,1,1)[:n]
+    df.columns = [c.strip() for c in df.columns]
 
-arima_order=parse(st.sidebar.text_input("ARIMA (p,d,q)","5,1,0"),3)
-sarima_order=parse(st.sidebar.text_input("SARIMA (p,d,q)","1,1,1"),3)
-seasonal_order=parse(st.sidebar.text_input("Seasonal (P,D,Q,s)","1,1,1,12"),4)
+    # detect date & price columns
+    try:
+        date_col = detect_date_column(df)
+        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+        if df[date_col].isna().all():
+            st.error("Date column conversion failed. Please ensure the file has a valid date column.")
+            st.stop()
+        df = df.set_index(date_col)
+    except Exception as e:
+        st.error(f"Date parsing error: {e}")
+        st.stop()
 
-lstm_seq=st.sidebar.number_input("LSTM seq len",10,200,60)
-lstm_ep=st.sidebar.number_input("LSTM epochs",1,50,5)
-lstm_bs=st.sidebar.number_input("Batch size",1,256,32)
+    try:
+        price_col = detect_price_column(df)
+    except Exception as e:
+        st.error(f"Price detection error: {e}")
+        st.stop()
 
-run=st.sidebar.button("🚀 Run Models")
+    series = df[price_col].astype(float)
 
-combined={}
-scores={}
+    # Preview & TradingView
+    with st.expander("📋 Data Preview", expanded=True):
+        st.dataframe(df.tail())
+        fig, ax = plt.subplots(figsize=(10, 3))
+        series.plot(ax=ax, title=f"{price_col} series")
+        st.pyplot(fig)
+        plt.close(fig)
 
-# --------------------------
-# RUN MODELS
-# --------------------------
-if run:
+    # TradingView dashboard (optimized placement)
+    tradingview_dashboard(uploaded.name)
 
-    # ARIMA
-    if "ARIMA" in models:
-        with st.spinner("Running ARIMA..."):
-            m=train_arima(train.squeeze(),order=arima_order)
-            pred=pd.Series(forecast_arima(m,len(test)),index=test.index)
-            combined["ARIMA"]=pred
-            scores["ARIMA"]={"RMSE":RMSE(test,pred),"MSE":MSE(test,pred),"MAPE":MAPE(test,pred)}
-            st.image(plot_series_buf(train,test,pred,"ARIMA Forecast"))
+    # Prepare series for modeling
+    series_prepared = prepare_series(df, col=price_col, freq="D")
+    train, test = train_test_split_series(series_prepared, test_size=0.2)
 
-    # SARIMA
-    if "SARIMA" in models:
-        with st.spinner("Running SARIMA..."):
-            m=train_sarima(train.squeeze(),order=sarima_order,seasonal_order=seasonal_order)
-            pred=pd.Series(forecast_sarima(m,len(test)),index=test.index)
-            combined["SARIMA"]=pred
-            scores["SARIMA"]={"RMSE":RMSE(test,pred),"MSE":MSE(test,pred),"MAPE":MAPE(test,pred)}
-            st.image(plot_series_buf(train,test,pred,"SARIMA Forecast"))
+    # Sidebar model config
+    st.sidebar.subheader("Models")
+    model_opts = ["ARIMA", "SARIMA", "LSTM"]
+    if PROPHET_AVAILABLE:
+        model_opts.append("Prophet")
+    models = st.sidebar.multiselect("Select models to run", model_opts, default=model_opts)
 
-    # Prophet
-    if "Prophet" in models and PROPHET_AVAILABLE:
-        with st.spinner("Running Prophet..."):
-            try:
-                m=train_prophet(train.squeeze())
-                fc=forecast_prophet(m,len(test)).reindex(test.index)
-                pred=pd.Series(fc.values,index=test.index)
-                combined["Prophet"]=pred
-                scores["Prophet"]={"RMSE":RMSE(test,pred),"MSE":MSE(test,pred),"MAPE":MAPE(test,pred)}
-                st.image(plot_series_buf(train,test,pred,"Prophet Forecast"))
-            except Exception as e:
-                st.error(f"Prophet failed: {e}")
+    # Hyperparameters
+    arima_text = st.sidebar.text_input("ARIMA (p,d,q)", "5,1,0")
+    sarima_text = st.sidebar.text_input("SARIMA (p,d,q)", "1,1,1")
+    seasonal_text = st.sidebar.text_input("Seasonal (P,D,Q,s)", "1,1,1,12")
 
-    # LSTM
-    if "LSTM" in models:
-        with st.spinner("Running LSTM..."):
-            sc=MinMaxScaler()
-            scaled=sc.fit_transform(series.values.reshape(-1,1))
-            split=int(len(scaled)*0.8)
-            lstm_data=scaled[:split]
-            lstm=train_lstm(lstm_data,seq_len=lstm_seq,epochs=lstm_ep,batch_size=lstm_bs)
-            fc=forecast_lstm(lstm,scaled,sc,seq_len=lstm_seq,steps=len(test))
-            pred=pd.Series(fc,index=test.index)
-            combined["LSTM"]=pred
-            scores["LSTM"]={"RMSE":RMSE(test,pred),"MSE":MSE(test,pred),"MAPE":MAPE(test,pred)}
-            st.image(plot_series_buf(train,test,pred,"LSTM Forecast"))
+    def parse_tuple(s: str, n: int, default: Tuple[int, ...]):
+        try:
+            parts = [int(x.strip()) for x in s.split(",")]
+            return tuple(parts[:n]) if len(parts) >= n else default
+        except Exception:
+            return default
 
-# --------------------------
-# RESULTS
-# --------------------------
-if combined:
-    st.subheader("📌 Combined Forecast Chart")
-    buf=plot_combined_chart(train,test,combined)
-    st.image(buf)
-    st.download_button("Download Combined Chart",buf.getvalue(),"combined.png","image/png")
+    arima_order = parse_tuple(arima_text, 3, (5,1,0))
+    sarima_order = parse_tuple(sarima_text, 3, (1,1,1))
+    seasonal_order = parse_tuple(seasonal_text, 4, (1,1,1,12))
 
-if scores:
-    st.subheader("📊 Metrics & Model Ranking")
-    dfm=pd.DataFrame(scores).T.sort_values("RMSE")
-    dfm["Rank"]=range(1,len(dfm)+1)
-    st.dataframe(dfm)
-    st.success(f"🏆 Best Model: {dfm.index[0]}")
+    lstm_seq = st.sidebar.number_input("LSTM seq len", 10, 200, 60)
+    lstm_epochs = st.sidebar.number_input("LSTM epochs", 1, 50, 5)
+    lstm_batch = st.sidebar.number_input("LSTM batch", 1, 256, 32)
 
-    radar=create_radar(dfm)
-    st.subheader("📡 Radar Chart")
-    st.image(radar)
-    st.download_button("Download Radar Chart",radar.getvalue(),"radar.png","image/png")
+    run = st.sidebar.button("▶ Run Models")
+
+    # Output containers
+    combined_predictions = {}
+    model_scores = {}
+
+    col1, col2 = st.columns(2)
+
+    if run:
+        # ARIMA
+        if "ARIMA" in models:
+            with st.spinner("Running ARIMA..."):
+                try:
+                    arima_res = train_arima(train.squeeze(), order=arima_order)
+                    arima_pred_vals = forecast_arima(arima_res, steps=len(test))
+                    arima_pred = pd.Series(arima_pred_vals, index=test.index)
+                    combined_predictions["ARIMA"] = arima_pred
+                    model_scores["ARIMA"] = {"RMSE": RMSE(test, arima_pred), "MSE": MSE(test, arima_pred), "MAPE": MAPE(test, arima_pred)}
+                    col1.subheader("ARIMA Forecast")
+                    col1.image(plot_series_buf(train, test, arima_pred, "ARIMA Forecast"))
+                except Exception as e:
+                    st.error(f"ARIMA failed: {e}")
+
+        # SARIMA
+        if "SARIMA" in models:
+            with st.spinner("Running SARIMA..."):
+                try:
+                    sarima_res = train_sarima(train.squeeze(), order=sarima_order, seasonal_order=seasonal_order)
+                    sarima_pred_vals = forecast_sarima(sarima_res, steps=len(test))
+                    sarima_pred = pd.Series(sarima_pred_vals, index=test.index)
+                    combined_predictions["SARIMA"] = sarima_pred
+                    model_scores["SARIMA"] = {"RMSE": RMSE(test, sarima_pred), "MSE": MSE(test, sarima_pred), "MAPE": MAPE(test, sarima_pred)}
+                    col1.subheader("SARIMA Forecast")
+                    col1.image(plot_series_buf(train, test, sarima_pred, "SARIMA Forecast"))
+                except Exception as e:
+                    st.error(f"SARIMA failed: {e}")
+
+        # Prophet
+        if "Prophet" in models and PROPHET_AVAILABLE:
+            with st.spinner("Running Prophet..."):
+                try:
+                    prophet_model = train_prophet(train.squeeze())
+                    prophet_pred_series = forecast_prophet(prophet_model, periods=len(test)).reindex(test.index)
+                    prophet_pred = pd.Series(prophet_pred_series.values, index=test.index)
+                    combined_predictions["Prophet"] = prophet_pred
+                    model_scores["Prophet"] = {"RMSE": RMSE(test, prophet_pred), "MSE": MSE(test, prophet_pred), "MAPE": MAPE(test, prophet_pred)}
+                    col2.subheader("Prophet Forecast")
+                    col2.image(plot_series_buf(train, test, prophet_pred, "Prophet Forecast"))
+                except Exception as e:
+                    st.error(f"Prophet failed: {e}")
+        elif "Prophet" in models and not PROPHET_AVAILABLE:
+            st.warning("Prophet is not available in this environment and was skipped.")
+
+        # LSTM
+        if "LSTM" in models:
+            with st.spinner("Running LSTM..."):
+                try:
+                    scaler = MinMaxScaler()
+                    scaled = scaler.fit_transform(series.values.reshape(-1, 1))
+                    split_idx = int(len(scaled) * 0.8)
+                    train_scaled = scaled[:split_idx]
+                    lstm_model = train_lstm(train_scaled, seq_len=int(lstm_seq), epochs=int(lstm_epochs), batch_size=int(lstm_batch))
+                    lstm_vals = forecast_lstm(lstm_model, scaled, scaler, seq_len=int(lstm_seq), steps=len(test))
+                    lstm_pred = pd.Series(lstm_vals, index=test.index)
+                    combined_predictions["LSTM"] = lstm_pred
+                    model_scores["LSTM"] = {"RMSE": RMSE(test, lstm_pred), "MSE": MSE(test, lstm_pred), "MAPE": MAPE(test, lstm_pred)}
+                    col2.subheader("LSTM Forecast")
+                    col2.image(plot_series_buf(train, test, lstm_pred, "LSTM Forecast"))
+                except Exception as e:
+                    st.error(f"LSTM failed: {e}")
+
+        # Combined chart & download
+        if combined_predictions:
+            st.markdown("---")
+            st.subheader("📊 Combined Forecast Chart")
+            combined_buf = plot_combined_buf(train, test, combined_predictions)
+            st.image(combined_buf)
+            st.download_button("⬇ Download Combined Chart (PNG)", combined_buf.getvalue(), file_name="combined_chart.png", mime="image/png")
+
+            # Combined CSV (actual + forecasts)
+            combined_df = pd.DataFrame(index=test.index)
+            combined_df["Actual"] = test.values
+            for name, series_pred in combined_predictions.items():
+                combined_df[name] = series_pred.values
+            csv_bytes = combined_df.reset_index().rename(columns={"index":"Date"}).to_csv(index=False).encode("utf-8")
+            st.download_button("⬇ Download Combined Forecasts (CSV)", csv_bytes, file_name="combined_forecasts.csv", mime="text/csv")
+
+        # Metrics, ranking, radar, downloads
+        if model_scores:
+            st.markdown("---")
+            st.subheader("📈 Model Performance Metrics")
+            metrics_df = pd.DataFrame(model_scores).T
+            metrics_df = metrics_df.sort_values("RMSE")
+            metrics_df["Rank"] = range(1, len(metrics_df) + 1)
+            st.dataframe(metrics_df.style.format({"RMSE":"{:.4f}","MSE":"{:.4f}","MAPE":"{:.2f}%"}))
+
+            best = metrics_df.index[0]
+            st.success(f"🏆 Best Model: {best}")
+
+            metrics_csv = metrics_df.reset_index().rename(columns={"index":"Model"}).to_csv(index=False).encode("utf-8")
+            st.download_button("⬇ Download Metrics CSV", metrics_csv, file_name="metrics.csv", mime="text/csv")
+
+            radar_buf = create_radar_buf(metrics_df)
+            st.subheader("📡 Radar Chart")
+            st.image(radar_buf)
+            st.download_button("⬇ Download Radar Chart (PNG)", radar_buf.getvalue(), file_name="radar_chart.png", mime="image/png")
+
+
+if __name__ == "__main__":
+    main()
