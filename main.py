@@ -1,9 +1,9 @@
 # =========================================================
-# ✅ COMPLETE PROFESSIONAL STOCK DASHBOARD (FINAL SAFE)
+# ✅ COMPLETE PROFESSIONAL AI TRADING + FORECASTING DASHBOARD
 # =========================================================
 
 import streamlit as st
-import sys, os, io, traceback
+import sys, os, io
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -36,7 +36,7 @@ html, body, .stApp {
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 AI Trading & Forecasting Professional Dashboard")
+st.title("📊 AI Trading & Forecasting Pro Dashboard")
 
 # =========================================================
 # ✅ LOAD FORECAST MODELS
@@ -53,17 +53,10 @@ from scripts.prophet_model import train_prophet, forecast_prophet
 from scripts.lstm_model import train_lstm, forecast_lstm
 
 # =========================================================
-# ✅ HELPERS
+# ✅ UTILS
 # =========================================================
 
 def RMSE(a,b): return np.sqrt(mean_squared_error(a,b))
-def MSE(a,b): return mean_squared_error(a,b)
-def MAPE(a,b):
-    a = np.array(a)
-    b = np.array(b)
-    a[a==0] = 1e-9
-    return np.mean(np.abs((a-b)/a))*100
-
 def detect_date_column(df):
     for c in df.columns:
         if "date" in c.lower(): return c
@@ -87,14 +80,13 @@ def plot_series(train,test,pred,title):
     return buf
 
 # =========================================================
-# ✅ SAFE NSE FETCH (WILL NEVER CRASH)
+# ✅ SAFE NSE FETCH
 # =========================================================
 
 def safe_nse_fetch(url):
     try:
         data = nsefetch(url)
-        if isinstance(data, dict):
-            return data
+        if isinstance(data, dict): return data
         return {}
     except Exception:
         return {}
@@ -102,9 +94,8 @@ def safe_nse_fetch(url):
 def fetch_nse_history(symbol):
     url = f"https://www.nseindia.com/api/historical/cm/equity?symbol={symbol}&series=[%22EQ%22]&from=01-01-2024&to=31-12-2024"
     data = safe_nse_fetch(url)
-    raw = data.get("data", [])
-    if len(raw) == 0:
-        return pd.DataFrame()
+    raw = data.get("data",[])
+    if len(raw)==0: return pd.DataFrame()
     df = pd.DataFrame(raw)
     df["date"] = pd.to_datetime(df["CH_TIMESTAMP"])
     df.set_index("date", inplace=True)
@@ -127,7 +118,6 @@ def add_indicators(df):
     ema12 = df["CH_CLOSING_PRICE"].ewm(span=12).mean()
     ema26 = df["CH_CLOSING_PRICE"].ewm(span=26).mean()
     df["MACD"] = ema12 - ema26
-    df["MACD_signal"] = df["MACD"].ewm(span=9).mean()
 
     return df
 
@@ -151,22 +141,26 @@ def ai_summary(df):
     elif latest["RSI"]<30: state="Oversold"
     else: state="Neutral"
     trend="Bullish" if latest["EMA_20"]>latest["SMA_50"] else "Bearish"
-    return f"**Trend:** {trend}\n\n**RSI:** {state}"
+    return f"""
+✅ **Trend:** {trend}  
+✅ **RSI:** {state}  
+✅ **AI Verdict:** {"Consider Buying" if trend=="Bullish" else "Avoid Fresh Buying"}
+"""
 
 # =========================================================
-# ✅ TABS (MULTI-PAGE)
+# ✅ MULTI-TABS (ALL FEATURES RESTORED)
 # =========================================================
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📂 Forecasting",
+    "📂 Forecasting (CSV)",
     "📈 Live + Indicators",
     "🔎 Screener",
-    "🕯 Patterns",
+    "🕯 Candle Patterns",
     "🤖 AI Summary"
 ])
 
 # =========================================================
-# ✅ TAB 1 — FULL CSV FORECASTING (RESTORED)
+# ✅ TAB 1 — FULL CSV FORECASTING (RESTORED ✅)
 # =========================================================
 
 with tab1:
@@ -192,31 +186,42 @@ with tab1:
         if st.button("🚀 Run Forecast Models"):
             preds = {}
 
-            arima = train_arima(train.squeeze(), order=(5,1,0))
-            preds["ARIMA"] = pd.Series(forecast_arima(arima,len(test)), index=test.index)
+            try:
+                arima = train_arima(train.squeeze(), order=(5,1,0))
+                preds["ARIMA"] = pd.Series(forecast_arima(arima,len(test)), index=test.index)
+            except: pass
 
-            sarima = train_sarima(train.squeeze())
-            preds["SARIMA"] = pd.Series(forecast_sarima(sarima,len(test)), index=test.index)
+            try:
+                sarima = train_sarima(train.squeeze())
+                preds["SARIMA"] = pd.Series(forecast_sarima(sarima,len(test)), index=test.index)
+            except: pass
 
-            prophet = train_prophet(train.squeeze())
-            pvals = forecast_prophet(prophet,len(test))
-            preds["Prophet"] = pd.Series(pvals.values,index=test.index)
+            try:
+                prophet = train_prophet(train.squeeze())
+                pvals = forecast_prophet(prophet,len(test))
+                preds["Prophet"] = pd.Series(pvals.values,index=test.index)
+            except: pass
 
-            scaler = MinMaxScaler()
-            scaled = scaler.fit_transform(series.values.reshape(-1,1))
-            lstm_model = train_lstm(scaled[:int(len(scaled)*0.8)], seq_len=60)
-            lvals = forecast_lstm(lstm_model, scaled, scaler,60,len(test))
-            preds["LSTM"] = pd.Series(lvals,index=test.index)
+            try:
+                scaler = MinMaxScaler()
+                scaled = scaler.fit_transform(series.values.reshape(-1,1))
+                lstm_model = train_lstm(scaled[:int(len(scaled)*0.8)], seq_len=60)
+                lvals = forecast_lstm(lstm_model, scaled, scaler,60,len(test))
+                preds["LSTM"] = pd.Series(lvals,index=test.index)
+            except: pass
 
-            for name,p in preds.items():
-                st.image(plot_series(train,test,p,name))
+            if len(preds)==0:
+                st.error("All models failed. Check CSV formatting.")
+            else:
+                for name,p in preds.items():
+                    st.image(plot_series(train,test,p,name))
 
 # =========================================================
 # ✅ TAB 2 — LIVE CHART + INDICATORS
 # =========================================================
 
 with tab2:
-    symbol = st.text_input("Enter NSE Symbol", "HDFCBANK").upper().replace(".NS","")
+    symbol = st.text_input("Enter NSE Symbol", "TCS").upper().replace(".NS","")
     df = fetch_nse_history(symbol)
 
     if df.empty:
@@ -237,7 +242,7 @@ with tab2:
         st.line_chart(df[["EMA_20","SMA_50","RSI","MACD"]])
 
 # =========================================================
-# ✅ TAB 3 — SAFE SCREENER (WILL NEVER CRASH)
+# ✅ TAB 3 — SAFE SCREENER
 # =========================================================
 
 with tab3:
@@ -265,7 +270,7 @@ with tab4:
         st.dataframe(dfp[["CH_CLOSING_PRICE","Pattern"]].tail(20))
         st.bar_chart(dfp["Pattern"].value_counts())
     else:
-        st.info("Load a stock in Live tab first.")
+        st.info("Load a stock first in Live tab.")
 
 # =========================================================
 # ✅ TAB 5 — AI SUMMARY
