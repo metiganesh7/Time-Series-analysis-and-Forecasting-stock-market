@@ -1,6 +1,21 @@
 import sys
 import os
 import io
+import datetime as dt
+
+# Add scripts folder
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SCRIPTS_DIR = os.path.join(BASE_DIR, "scripts")
+if SCRIPTS_DIR not in sys.path:
+    sys.path.append(SCRIPTS_DIR)
+
+# Import model scripts
+from scripts.utils import prepare_series, train_test_split_series
+from scripts.arima_model import train_arima, forecast_arima
+from scripts.sarima_model import train_sarima, forecast_sarima
+from scripts.prophet_model import train_prophet, forecast_prophet
+from scripts.lstm_model import train_lstm, forecast_lstm
+
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -9,442 +24,362 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 
-# Ensure /scripts import works
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SCRIPTS_DIR = os.path.join(BASE_DIR, "scripts")
-if SCRIPTS_DIR not in sys.path:
-    sys.path.append(SCRIPTS_DIR)
-
-# Import forecasting modules
-from scripts.utils import prepare_series, train_test_split_series
-from scripts.arima_model import train_arima, forecast_arima
-from scripts.sarima_model import train_sarima, forecast_sarima
-from scripts.lstm_model import train_lstm, forecast_lstm
-
-# Safe Prophet import
-try:
-    from scripts.prophet_model import train_prophet, forecast_prophet
-    PROPHET_AVAILABLE = True
-except:
-    PROPHET_AVAILABLE = False
-
-
-# ------------------------------------------------------------
-# UI THEME
-# ------------------------------------------------------------
-st.set_page_config(page_title="Forecast Dashboard", layout="wide")
-
-st.markdown("""
-<style>
-html, body, .stApp { background-color: #0A0F1F; color: #E4E8F0; font-family: Poppins, sans-serif; }
-.block-container { background: rgba(255,255,255,0.03); padding: 20px; border-radius: 14px; }
-.stButton > button { background: linear-gradient(135deg,#6B73FF,#000DFF); color:white; padding:10px 18px;
-                     border-radius:10px; font-weight:600; }
-.stDownloadButton > button { background: linear-gradient(135deg,#FFB300,#FFDD55); color:black;
-                             padding:10px 14px; border-radius:8px; font-weight:700; }
-.chart-card { background:rgba(255,255,255,0.04); padding:15px; border-radius:12px; }
-</style>
-""", unsafe_allow_html=True)
-
-
-
-# ------------------------------------------------------------
-# METRICS
-# ------------------------------------------------------------
-def RMSE(a,p): return float(np.sqrt(mean_squared_error(a,p)))
-def MSE(a,p): return float(mean_squared_error(a,p))
-def MAPE(a,p):
-    a=np.array(a,dtype=float); p=np.array(p,dtype=float)
-    a[a==0]=1e-8
-    return float(np.mean(np.abs((a-p)/a))*100)
-
-
-# ------------------------------------------------------------
-# SYMBOL RESOLVER (NEW)
-# ------------------------------------------------------------
+# ------------------------------
+# SMART NSE SYMBOL DETECTOR
+# ------------------------------
 def resolve_symbol(file_name: str) -> str:
     """
-    Convert uploaded CSV name -> proper NSE/TradingView symbol.
-    Example: Hdfc.csv → HDFCBANK.NS
+    Convert uploaded CSV name → TradingView compatible NSE symbol.
+    Example: Hdfc.csv → NSE:HDFCBANK
     """
+
     base = os.path.splitext(file_name)[0].upper()
     base = base.replace(" ", "").replace("-", "").replace("_", "")
 
-    # Mappings for Indian stocks
     nse_map = {
-        "HDFC": "HDFCBANK.NS",
-        "HDFCBANK": "HDFCBANK.NS",
-        "RELIANCE": "RELIANCE.NS",
-        "TCS": "TCS.NS",
-        "INFY": "INFY.NS",
-        "WIPRO": "WIPRO.NS",
-        "SBIN": "SBIN.NS",
-        "ICICIBANK": "ICICIBANK.NS",
-        "ASIANPAINT": "ASIANPAINT.NS",
-        "MARUTI": "MARUTI.NS",
-        "KOTAKBANK": "KOTAKBANK.NS",
-        "AXISBANK": "AXISBANK.NS",
-        "HCLTECH": "HCLTECH.NS",
-        "ULTRACEMCO": "ULTRACEMCO.NS",
-        "ADANIPORTS": "ADANIPORTS.NS",
-        "ADANIPOWER": "ADANIPOWER.NS",
-        "ADANIENT": "ADANIENT.NS",
+        "HDFC": "HDFCBANK",
+        "HDFCBANK": "HDFCBANK",
+        "RELIANCE": "RELIANCE",
+        "TCS": "TCS",
+        "INFY": "INFY",
+        "WIPRO": "WIPRO",
+        "SBIN": "SBIN",
+        "ICICIBANK": "ICICIBANK",
+        "ASIANPAINT": "ASIANPAINT",
+        "MARUTI": "MARUTI",
+        "KOTAKBANK": "KOTAKBANK",
+        "AXISBANK": "AXISBANK",
+        "HCLTECH": "HCLTECH",
+        "ULTRACEMCO": "ULTRACEMCO",
+        "ADANIPORTS": "ADANIPORTS",
+        "ADANIPOWER": "ADANIPOWER",
+        "ADANIENT": "ADANIENT",
+        "MRF": "MRF",
     }
 
     if base in nse_map:
-        return nse_map[base]
+        return f"NSE:{nse_map[base]}"
 
     if base.endswith(".NS"):
-        return base
+        base = base.replace(".NS", "")
 
-    # Default NSE assumption
-    return base + ".NS"
-
-
-# ------------------------------------------------------------
-# DETECT DATE & PRICE COLUMN
-# ------------------------------------------------------------
-def detect_date_column(df):
-    for c in df.columns:
-        if "date" in c.lower(): return c
-    return df.columns[0]
-
-def detect_price_column(df):
-    for c in ["Close","close","Adj Close","price","Price"]:
-        if c in df.columns:
-            return c
-    numeric=df.select_dtypes(include="number").columns
-    if len(numeric)==0:
-        raise ValueError("No numeric column found")
-    return numeric[-1]
+    return f"NSE:{base}"
 
 
-# ------------------------------------------------------------
-# PLOTTING HELPERS
-# ------------------------------------------------------------
-def plot_series_buf(train,test,pred,title):
-    fig,ax=plt.subplots(figsize=(10,4))
-    train.plot(ax=ax,label="Train")
-    test.plot(ax=ax,label="Test")
-    pred.plot(ax=ax,label="Forecast")
+# ------------------------------
+# METRICS
+# ------------------------------
+def RMSE(actual, predicted):
+    return np.sqrt(mean_squared_error(actual, predicted))
+
+def MSE(actual, predicted):
+    return mean_squared_error(actual, predicted)
+
+def MAPE(actual, predicted):
+    actual = np.array(actual)
+    predicted = np.array(predicted)
+    actual = np.where(actual == 0, 1e-8, actual)
+    return np.mean(np.abs((actual - predicted) / actual)) * 100
+
+
+# ------------------------------
+# CHART HELPERS
+# ------------------------------
+def plot_series_buf(train, test, pred, title):
+    fig, ax = plt.subplots(figsize=(10, 4))
+    train.plot(ax=ax, label="Train")
+    test.plot(ax=ax, label="Test")
+    pred.plot(ax=ax, label="Forecast")
     ax.set_title(title)
     ax.legend()
-    buf=io.BytesIO()
-    fig.savefig(buf,format="png",bbox_inches="tight")
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
     buf.seek(0)
     plt.close(fig)
     return buf
 
-def combined_chart_buf(train,test,preds):
-    fig,ax=plt.subplots(figsize=(12,5))
-    train.plot(ax=ax,label="Train",linewidth=2)
-    test.plot(ax=ax,label="Test",linewidth=2)
-    for name,p in preds.items():
-        ax.plot(p.index,p.values,label=name,linewidth=2)
+
+def plot_combined_chart(train, test, combined_predictions):
+    fig, ax = plt.subplots(figsize=(12, 5))
+    train.plot(ax=ax, label="Train", linewidth=2)
+    test.plot(ax=ax, label="Test", linewidth=2)
+
+    for name, series in combined_predictions.items():
+        series.plot(ax=ax, label=name, linewidth=2)
+
+    ax.set_title("Model Comparison Forecast")
     ax.legend()
-    ax.set_title("Combined Forecasts")
-    buf=io.BytesIO()
-    fig.savefig(buf,format="png")
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
     buf.seek(0)
     plt.close(fig)
     return buf
 
-def radar_chart_buf(df):
-    df=df[["RMSE","MSE","MAPE"]].astype(float)
-    norm=(df.max()-df)/(df.max()-df.min()+1e-8)
-    labels=list(norm.columns)
-    angles=np.linspace(0,2*np.pi,len(labels),endpoint=False).tolist()
-    angles+=angles[:1]
-    fig=plt.figure(figsize=(6,6))
-    ax=fig.add_subplot(111,polar=True)
+
+def create_radar_chart(metrics_df):
+    df = metrics_df[["RMSE", "MSE", "MAPE"]].astype(float)
+
+    norm = (df.max() - df) / (df.max() - df.min()).replace(0, 1)
+
+    labels = df.columns
+    angles = np.linspace(0, 2*np.pi, len(labels), endpoint=False).tolist() + [0]
+
+    fig = plt.figure(figsize=(6, 6))
+    ax = fig.add_subplot(111, polar=True)
+
     for idx in norm.index:
-        vals=list(norm.loc[idx])+[norm.loc[idx][0]]
-        ax.plot(angles,vals,label=idx)
-        ax.fill(angles,vals,alpha=0.15)
+        values = norm.loc[idx].tolist() + [norm.loc[idx, labels[0]]]
+        ax.plot(angles, values, label=idx)
+        ax.fill(angles, values, alpha=0.15)
+
     ax.set_thetagrids(np.degrees(angles[:-1]), labels)
-    buf=io.BytesIO()
-    fig.savefig(buf,format="png")
+    ax.set_title("Model Radar Chart (Higher = Better)")
+    ax.legend(loc="upper right", bbox_to_anchor=(1.4, 1.1))
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
     buf.seek(0)
     plt.close(fig)
     return buf
 
 
-
-# ------------------------------------------------------------
-# TRADINGVIEW DASHBOARD (UPDATED to use manual override)
-# ------------------------------------------------------------
-def tradingview_dashboard(symbol: str):
-
-    # TICKER TAPE
-    tape = """
+# ------------------------------
+# TRADINGVIEW DASHBOARD
+# ------------------------------
+def tradingview_chart(symbol):
+    widget = f"""
     <div class="tradingview-widget-container">
-    <script src="https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js">
-    {
-      "symbols":[
-        {"proName":"NSE:NIFTY","title":"NIFTY 50"},
-        {"proName":"BSE:SENSEX","title":"SENSEX"},
-        {"proName":"CRYPTO:BTCUSD","title":"BTC"},
-        {"proName":"CRYPTO:ETHUSD","title":"ETH"}
-      ],
-      "colorTheme":"dark",
-      "displayMode":"adaptive"
-    }
-    </script></div>
-    """
-    components.html(tape, height=80)
+      <div class="tradingview-widget-container__widget"></div>
 
-    # MAIN CHART
-    chart=f"""
-    <div class="tradingview-widget-container">
-      <div id="tv_chart"></div>
-      <script src="https://s3.tradingview.com/tv.js"></script>
-      <script>
-      new TradingView.widget({{
-        "width":"100%",
-        "height":550,
-        "symbol":"{symbol}",
-        "interval":"D",
-        "timezone":"Etc/UTC",
-        "theme":"dark",
-        "style":"1",
-        "locale":"en",
-        "toolbar_bg":"#000000",
-        "allow_symbol_change":true,
-        "container_id":"tv_chart"
-      }});
+      <script type="text/javascript" 
+        src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js">
+      {{
+        "autosize": true,
+        "symbol": "{symbol}",
+        "interval": "D",
+        "theme": "dark", 
+        "style": "1",
+        "locale": "en",
+        "allow_symbol_change": true,
+        "calendar": false
+      }}
       </script>
     </div>
     """
-    components.html(chart, height=560)
+    components.html(widget, height=600)
 
-    # SCREENER
-    screener = """
+
+def tradingview_screener():
+    widget = """
     <div class="tradingview-widget-container">
-      <script src="https://s3.tradingview.com/external-embedding/embed-widget-screener.js">
+      <div class="tradingview-widget-container__widget"></div>
+
+      <script type="text/javascript"
+      src="https://s3.tradingview.com/external-embedding/embed-widget-screener.js">
       {
-        "width":"100%",
-        "height":"550",
-        "defaultColumn":"overview",
-        "defaultScreen":"most_capitalized",
-        "market":"india",
-        "showToolbar":true,
-        "colorTheme":"dark"
+        "width": "100%",
+        "height": 600,
+        "defaultColumn": "overview",
+        "defaultScreen": "general",
+        "market": "india",
+        "colorTheme": "dark",
+        "locale": "en"
       }
       </script>
     </div>
     """
-    components.html(screener, height=560)
+    components.html(widget, height=620)
 
 
+# ------------------------------------------------------
+# STREAMLIT APP UI
+# ------------------------------------------------------
+st.set_page_config(page_title="Stock Forecasting Dashboard", layout="wide")
+
+st.title("📈 Premium Stock Forecasting Dashboard")
+
+uploaded = st.sidebar.file_uploader("Upload CSV", type=["csv"])
+
+if uploaded is None:
+    st.warning("Please upload a CSV to continue.")
+    st.stop()
+
+df = pd.read_csv(uploaded)
+df.columns = [c.strip() for c in df.columns]
+
+# Detect date column
+date_col = None
+for col in df.columns:
+    if "date" in col.lower():
+        date_col = col
+        break
+if date_col is None:
+    date_col = df.columns[0]
+
+df[date_col] = pd.to_datetime(df[date_col])
+df.set_index(date_col, inplace=True)
+
+# Detect price column
+price_candidates = ["Close", "close", "Adj Close", "Price"]
+price_col = None
+for c in price_candidates:
+    if c in df.columns:
+        price_col = c
+        break
+
+if price_col is None:
+    price_col = df.select_dtypes(include="number").columns[-1]
+
+series = df[price_col]
+
+with st.expander("📊 Data Preview", True):
+    st.dataframe(df.tail())
+
+# Smart symbol + manual override
+auto_symbol = resolve_symbol(uploaded.name)
+manual_symbol = st.sidebar.text_input("TradingView Symbol Override", auto_symbol)
+tv_symbol = manual_symbol.strip().upper()
 
 
-# ==================================================================
-# MAIN APP
-# ==================================================================
-def main():
-    st.title("📈 Premium Forecast Dashboard (Updated Symbol Handling)")
+# ------------------------------------------------------
+# TRADINGVIEW SECTION
+# ------------------------------------------------------
+st.subheader("📉 Live TradingView Chart")
+tradingview_chart(tv_symbol)
 
-    # -----------------------------  
-    # UPLOAD  
-    # -----------------------------
-    uploaded = st.sidebar.file_uploader("Upload CSV", type=["csv"])
-    if not uploaded:
-        st.stop()
-
-    # Read file
-    df = pd.read_csv(uploaded)
-    df.columns=[c.strip() for c in df.columns]
-
-    # Detect columns
-    date_col = detect_date_column(df)
-    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-    df = df.set_index(date_col)
-
-    price_col = detect_price_column(df)
-    series = df[price_col].astype(float)
-
-    # Preview
-    with st.expander("📌 Data Preview", True):
-        st.dataframe(df.tail())
-        fig, ax = plt.subplots(figsize=(10,3))
-        series.plot(ax=ax)
-        st.pyplot(fig)
-        plt.close(fig)
-
-    # -----------------------------  
-    # SYMBOL AUTO + MANUAL OVERRIDE  
-    # -----------------------------
-    auto_symbol = resolve_symbol(uploaded.name)
-
-    st.sidebar.subheader("TradingView Symbol Override")
-    tv_symbol = st.sidebar.text_input(
-        "Symbol (Auto detected from file):",
-        value=auto_symbol,
-        help="e.g., HDFCBANK.NS, TCS.NS, RELIANCE.NS, AAPL, BTCUSD"
-    ).upper().strip()
-
-    # SHOW TV DASHBOARD
-    st.subheader("📊 TradingView Market Dashboard")
-    tradingview_dashboard(tv_symbol)
+st.subheader("📋 TradingView Stock Screener")
+tradingview_screener()
 
 
-    # ------------------------------------------------------------
-    # PREP DATA FOR MODELS
-    # ------------------------------------------------------------
-    series_daily = prepare_series(df, col=price_col, freq="D")
-    train, test = train_test_split_series(series_daily, test_size=0.2)
+# ------------------------------------------------------
+# MODEL TRAINING
+# ------------------------------------------------------
+series = prepare_series(df, col=price_col, freq="D")
+train, test = train_test_split_series(series, 0.2)
 
-    # -----------------------------
-    # SIDEBAR MODEL SETTINGS
-    # -----------------------------
-    st.sidebar.subheader("Forecast Models")
-    options = ["ARIMA","SARIMA","LSTM"]
-    if PROPHET_AVAILABLE:
-        options.append("Prophet")
+st.sidebar.subheader("Select Models")
+selected_models = st.sidebar.multiselect(
+    "Models",
+    ["ARIMA", "SARIMA", "Prophet", "LSTM"],
+    default=["ARIMA", "SARIMA", "Prophet", "LSTM"]
+)
 
-    selected = st.sidebar.multiselect("Select models", options, default=options)
+# Model params
+arima_order = tuple(map(int, st.sidebar.text_input("ARIMA (p,d,q)", "5,1,0").split(",")))
+sarima_order = tuple(map(int, st.sidebar.text_input("SARIMA (p,d,q)", "1,1,1").split(",")))
+seasonal_order = tuple(map(int, st.sidebar.text_input("Seasonal (P,D,Q,s)", "1,1,1,12").split(",")))
+lstm_seq = st.sidebar.number_input("LSTM Sequence Length", 10, 200, 60)
+lstm_epochs = st.sidebar.number_input("LSTM Epochs", 1, 50, 5)
+lstm_batch = st.sidebar.number_input("LSTM Batch Size", 1, 256, 32)
 
-    # ARIMA settings
-    arima_order = tuple(map(int, st.sidebar.text_input("ARIMA (p,d,q)", "5,1,0").split(",")))
+run = st.sidebar.button("🚀 Run Models")
 
-    # SARIMA settings
-    sarima_order = tuple(map(int, st.sidebar.text_input("SARIMA (p,d,q)", "1,1,1").split(",")))
-    seasonal_order = tuple(map(int, st.sidebar.text_input("Seasonal (P,D,Q,s)", "1,1,1,12").split(",")))
+combined_predictions = {}
+model_scores = {}
 
-    # LSTM settings
-    lstm_seq = st.sidebar.number_input("LSTM sequence length", 10, 300, 60)
-    lstm_epochs = st.sidebar.number_input("LSTM epochs", 1, 50, 5)
-    lstm_batch = st.sidebar.number_input("LSTM batch size", 1, 256, 32)
-
-    run = st.sidebar.button("🚀 Run Models")
-
-    combined = {}
-    scores = {}
+if run:
 
     col1, col2 = st.columns(2)
 
-    if run:
+    # ---------------- ARIMA ----------------
+    if "ARIMA" in selected_models:
+        with st.spinner("Running ARIMA..."):
+            model = train_arima(train.squeeze(), order=arima_order)
+            pred = pd.Series(
+                forecast_arima(model, len(test)),
+                index=test.index
+            )
+            combined_predictions["ARIMA"] = pred
+            model_scores["ARIMA"] = {
+                "RMSE": RMSE(test, pred),
+                "MSE": MSE(test, pred),
+                "MAPE": MAPE(test, pred)
+            }
+            col1.subheader("ARIMA Forecast")
+            col1.image(plot_series_buf(train, test, pred, "ARIMA Forecast"))
 
-        # ---------------- ARIMA ----------------
-        if "ARIMA" in selected:
-            with st.spinner("Running ARIMA..."):
-                try:
-                    model = train_arima(train.squeeze(), order=arima_order)
-                    pred_vals = forecast_arima(model, steps=len(test))
-                    pred = pd.Series(pred_vals, index=test.index)
+    # ---------------- SARIMA ----------------
+    if "SARIMA" in selected_models:
+        with st.spinner("Running SARIMA..."):
+            model = train_sarima(train.squeeze(), order=sarima_order, seasonal_order=seasonal_order)
+            pred = pd.Series(
+                forecast_sarima(model, len(test)),
+                index=test.index
+            )
+            combined_predictions["SARIMA"] = pred
+            model_scores["SARIMA"] = {
+                "RMSE": RMSE(test, pred),
+                "MSE": MSE(test, pred),
+                "MAPE": MAPE(test, pred)
+            }
+            col1.subheader("SARIMA Forecast")
+            col1.image(plot_series_buf(train, test, pred, "SARIMA Forecast"))
 
-                    combined["ARIMA"] = pred
-                    scores["ARIMA"] = {
-                        "RMSE": RMSE(test,pred),
-                        "MSE": MSE(test,pred),
-                        "MAPE": MAPE(test,pred)
-                    }
+    # ---------------- Prophet ----------------
+    if "Prophet" in selected_models:
+        with st.spinner("Running Prophet..."):
+            model = train_prophet(train.squeeze())
+            pred_vals = forecast_prophet(model, len(test))
+            pred_vals = pred_vals.reindex(test.index)
+            pred = pd.Series(pred_vals.values, index=test.index)
+            combined_predictions["Prophet"] = pred
+            model_scores["Prophet"] = {
+                "RMSE": RMSE(test, pred),
+                "MSE": MSE(test, pred),
+                "MAPE": MAPE(test, pred)
+            }
+            col2.subheader("Prophet Forecast")
+            col2.image(plot_series_buf(train, test, pred, "Prophet Forecast"))
 
-                    col1.subheader("ARIMA Forecast")
-                    col1.image(plot_series_buf(train,test,pred,"ARIMA"))
-                except Exception as e:
-                    st.error(f"ARIMA failed: {e}")
+    # ---------------- LSTM ----------------
+    if "LSTM" in selected_models:
+        with st.spinner("Running LSTM..."):
+            scaler = MinMaxScaler()
+            scaled = scaler.fit_transform(series.values.reshape(-1, 1))
+            split = int(len(scaled) * 0.8)
+            train_scaled = scaled[:split]
 
-        # ---------------- SARIMA ----------------
-        if "SARIMA" in selected:
-            with st.spinner("Running SARIMA..."):
-                try:
-                    model = train_sarima(train.squeeze(), order=sarima_order, seasonal_order=seasonal_order)
-                    pred_vals = forecast_sarima(model, steps=len(test))
-                    pred = pd.Series(pred_vals, index=test.index)
+            lstm_model = train_lstm(train_scaled, seq_len=lstm_seq, epochs=lstm_epochs, batch_size=lstm_batch)
+            pred_vals = forecast_lstm(lstm_model, scaled, scaler, seq_len=lstm_seq, steps=len(test))
+            pred = pd.Series(pred_vals, index=test.index)
 
-                    combined["SARIMA"] = pred
-                    scores["SARIMA"] = {
-                        "RMSE": RMSE(test,pred),
-                        "MSE": MSE(test,pred),
-                        "MAPE": MAPE(test,pred)
-                    }
-
-                    col1.subheader("SARIMA Forecast")
-                    col1.image(plot_series_buf(train,test,pred,"SARIMA"))
-                except Exception as e:
-                    st.error(f"SARIMA failed: {e}")
-
-        # ---------------- PROPHET ----------------
-        if "Prophet" in selected and PROPHET_AVAILABLE:
-            with st.spinner("Running Prophet..."):
-                try:
-                    model = train_prophet(train.squeeze())
-                    pred_vals = forecast_prophet(model, periods=len(test))
-                    pred_vals = pred_vals.reindex(test.index)
-                    pred = pd.Series(pred_vals.values, index=test.index)
-
-                    combined["Prophet"] = pred
-                    scores["Prophet"] = {
-                        "RMSE": RMSE(test,pred),
-                        "MSE": MSE(test,pred),
-                        "MAPE": MAPE(test,pred)
-                    }
-
-                    col2.subheader("Prophet Forecast")
-                    col2.image(plot_series_buf(train,test,pred,"Prophet"))
-                except Exception as e:
-                    st.error(f"Prophet failed: {e}")
-
-        # ---------------- LSTM ----------------
-        if "LSTM" in selected:
-            with st.spinner("Running LSTM..."):
-                try:
-                    scaler = MinMaxScaler()
-                    scaled = scaler.fit_transform(series_daily.values.reshape(-1,1))
-                    split = int(len(scaled)*0.8)
-                    train_scaled = scaled[:split]
-
-                    model = train_lstm(train_scaled, seq_len=lstm_seq, epochs=lstm_epochs, batch_size=lstm_batch)
-                    pred_vals = forecast_lstm(model, scaled, scaler, seq_len=lstm_seq, steps=len(test))
-                    pred = pd.Series(pred_vals, index=test.index)
-
-                    combined["LSTM"] = pred
-                    scores["LSTM"] = {
-                        "RMSE": RMSE(test,pred),
-                        "MSE": MSE(test,pred),
-                        "MAPE": MAPE(test,pred)
-                    }
-
-                    col2.subheader("LSTM Forecast")
-                    col2.image(plot_series_buf(train,test,pred,"LSTM"))
-                except Exception as e:
-                    st.error(f"LSTM failed: {e}")
+            combined_predictions["LSTM"] = pred
+            model_scores["LSTM"] = {
+                "RMSE": RMSE(test, pred),
+                "MSE": MSE(test, pred),
+                "MAPE": MAPE(test, pred)
+            }
+            col2.subheader("LSTM Forecast")
+            col2.image(plot_series_buf(train, test, pred, "LSTM Forecast"))
 
 
-        # ------------------------------------------------------------
-        # COMBINED CHART
-        # ------------------------------------------------------------
-        if combined:
-            st.subheader("📊 Combined Forecast Chart")
-            buf = combined_chart_buf(train, test, combined)
-            st.image(buf)
-            st.download_button("Download Combined Chart", buf.getvalue(), "combined.png", "image/png")
+    # ---------------- Combined Chart ----------------
+    if combined_predictions:
+        st.subheader("📊 Combined Forecast Chart")
+        combined_buf = plot_combined_chart(train, test, combined_predictions)
+        st.image(combined_buf)
 
-        # ------------------------------------------------------------
-        # METRICS
-        # ------------------------------------------------------------
-        if scores:
-            st.subheader("📈 Model Performance Metrics")
-
-            dfm = pd.DataFrame(scores).T
-            dfm = dfm.sort_values("RMSE")
-            dfm["Rank"] = range(1, len(dfm)+1)
-
-            st.dataframe(dfm)
-
-            st.success(f"🏆 Best Model: {dfm.index[0]}")
-
-            metrics_csv = dfm.to_csv().encode("utf-8")
-            st.download_button("Download metrics CSV", metrics_csv, "metrics.csv")
-
-            radar = radar_chart_buf(dfm)
-            st.subheader("📡 Radar Chart")
-            st.image(radar)
-            st.download_button("Download Radar Chart", radar.getvalue(), "radar.png", "image/png")
+        st.download_button("Download Combined Chart", combined_buf.getvalue(), "combined_chart.png")
 
 
+    # ---------------- Metrics ----------------
+    if model_scores:
+        st.subheader("📈 Model Performance Metrics")
 
+        metrics_df = pd.DataFrame(model_scores).T
+        metrics_df["Rank"] = metrics_df["RMSE"].rank().astype(int)
 
-if __name__ == "__main__":
-    main()
+        st.dataframe(metrics_df.style.background_gradient(cmap="Blues"))
+
+        best_model = metrics_df.sort_values("RMSE").index[0]
+        st.success(f"🏆 Best Model: **{best_model}**")
+
+        st.download_button("Download Metrics CSV", metrics_df.to_csv().encode(), "metrics.csv")
+
+        st.subheader("📡 Radar Chart")
+        radar_buf = create_radar_chart(metrics_df)
+        st.image(radar_buf)
+
+        st.download_button("Download Radar Chart", radar_buf.getvalue(), "radar_chart.png")
