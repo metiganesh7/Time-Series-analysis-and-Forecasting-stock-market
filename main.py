@@ -28,105 +28,125 @@ import streamlit.components.v1 as components
 # PARTICLE BACKGROUND (STYLE A)
 import streamlit.components.v1 as components
 
-particle_html = """
-<canvas id="particles"></canvas>
-
+components.html("""
+<!DOCTYPE html>
+<html>
+<head>
 <style>
-#particles {
+html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+}
+
+/* FULL SCREEN PARTICLE CANVAS */
+#particle-canvas {
     position: fixed;
     top: 0;
     left: 0;
-    width: 100vw;
-    height: 100vh;
-    z-index: -5;
+    width: 100%;
+    height: 100%;
+    z-index: -1000; /* BEHIND STREAMLIT */
     pointer-events: none;
 }
 </style>
+</head>
+
+<body>
+<canvas id="particle-canvas"></canvas>
 
 <script>
-const canvas = document.getElementById('particles');
+const canvas = document.getElementById('particle-canvas');
 const ctx = canvas.getContext('2d');
 
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
-let particlesArray = [];
+let particles = [];
 
-window.addEventListener('resize', () => {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    init();
-});
-
+// PARTICLE CLASS
 class Particle {
-    constructor(){
+    constructor() {
         this.x = Math.random() * canvas.width;
         this.y = Math.random() * canvas.height;
         this.size = Math.random() * 2 + 1;
-        this.speedX = (Math.random() * 0.4) - 0.2;
-        this.speedY = (Math.random() * 0.4) - 0.2;
+        this.speedX = (Math.random() * 0.6) - 0.3;
+        this.speedY = (Math.random() * 0.6) - 0.3;
     }
-    update(){
+
+    update() {
         this.x += this.speedX;
         this.y += this.speedY;
 
-        if(this.x < 0 || this.x > canvas.width){ this.speedX *= -1; }
-        if(this.y < 0 || this.y > canvas.height){ this.speedY *= -1; }
+        // Bounce at borders
+        if (this.x < 0 || this.x > canvas.width) this.speedX *= -1;
+        if (this.y < 0 || this.y > canvas.height) this.speedY *= -1;
     }
-    draw(){
-        ctx.fillStyle = "#00eaff";
-        ctx.shadowColor = "#00eaff";
-        ctx.shadowBlur = 15;
+
+    draw() {
         ctx.beginPath();
         ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(0, 255, 255, 0.85)";
+        ctx.shadowColor = "#00ffff";
+        ctx.shadowBlur = 15;
         ctx.fill();
     }
 }
 
-function init(){
-    particlesArray = [];
-    let numParticles = 120;
-    for(let i=0; i<numParticles; i++){
-        particlesArray.push(new Particle());
+function initParticles() {
+    particles = [];
+    for (let i = 0; i < 140; i++) {
+        particles.push(new Particle());
     }
 }
 
-function connect(){
-    for(let i=0; i<particlesArray.length; i++){
-        for(let j=i; j<particlesArray.length; j++){
-            let dx = particlesArray[i].x - particlesArray[j].x;
-            let dy = particlesArray[i].y - particlesArray[j].y;
-            let distance = dx*dx + dy*dy;
+function connectParticles() {
+    for (let a = 0; a < particles.length; a++) {
+        for (let b = a; b < particles.length; b++) {
+            let dx = particles[a].x - particles[b].x;
+            let dy = particles[a].y - particles[b].y;
+            let distance = dx * dx + dy * dy;
 
-            if(distance < 9000){
-                ctx.strokeStyle = "rgba(0,234,255,0.1)";
+            if (distance < 9000) {
+                ctx.strokeStyle = "rgba(0,255,255,0.12)";
                 ctx.lineWidth = 1;
                 ctx.beginPath();
-                ctx.moveTo(particlesArray[i].x, particlesArray[i].y);
-                ctx.lineTo(particlesArray[j].x, particlesArray[j].y);
+                ctx.moveTo(particles[a].x, particles[a].y);
+                ctx.lineTo(particles[b].x, particles[b].y);
                 ctx.stroke();
             }
         }
     }
 }
 
-function animate(){
+function animate() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    particlesArray.forEach(p => {
+
+    particles.forEach(p => {
         p.update();
         p.draw();
     });
-    connect();
+
+    connectParticles();
     requestAnimationFrame(animate);
 }
 
-init();
+window.addEventListener('resize', () => {
+    canvas.width = innerWidth;
+    canvas.height = innerHeight;
+    initParticles();
+});
+
+initParticles();
 animate();
+
 </script>
-"""
-
-components.html(particle_html, height=0, width=0)
-
+</body>
+</html>
+""",
+height=0,  # HTML renders globally, height 0 keeps layout clean
+width=0
+)
 # --------------------------
 # METRIC FUNCTIONS
 # --------------------------
