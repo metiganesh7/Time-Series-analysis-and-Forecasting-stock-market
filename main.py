@@ -29,135 +29,108 @@ from sklearn.metrics import mean_squared_error
 st.markdown("""
 <style>
 
-@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap');
-
-/* GLOBAL SETTINGS */
-.stApp {
-    background: radial-gradient(circle at top left, #0f0f17, #08080f, #000000);
-    font-family: 'Poppins', sans-serif;
-    color: #f1f1f1;
-    animation: fadeIn 1s ease-in-out;
-}
-
-/* SMOOTH FADE */
-@keyframes fadeIn {
-    from {opacity: 0;}
-    to {opacity: 1;}
-}
-
-/* FLOATING CARDS WITH GLOW */
+/* -------------------------- */
+/* 🔥 1) CARD 3D HOVER EFFECT */
+/* -------------------------- */
 .block-container {
-    background: rgba(20, 20, 30, 0.4);
-    border-radius: 18px;
-    padding: 2rem;
-    margin-top: 20px;
-    border: 1px solid rgba(100, 100, 255, 0.15);
-    backdrop-filter: blur(14px);
-    box-shadow: 0 0 25px rgba(0, 122, 255, 0.15),
-                0 0 45px rgba(0, 122, 255, 0.10);
-    animation: cardFloat 6s ease-in-out infinite alternate;
+    transition: transform 0.4s ease, box-shadow 0.4s ease;
+}
+.block-container:hover {
+    transform: translateY(-8px) scale(1.01);
+    box-shadow: 0 0 30px rgba(0, 200, 255, 0.35);
 }
 
-@keyframes cardFloat {
-    0% { transform: translateY(0px); }
-    50% { transform: translateY(-6px); }
-    100% { transform: translateY(0px); }
-}
-
-/* HEADERS */
+/* -------------------------- */
+/* 🔥 2) PULSING HEADER GLOW */
+/* -------------------------- */
 h1 {
-    background: linear-gradient(90deg, #7f5af0, #2cb67d);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    font-size: 42px !important;
-    font-weight: 700 !important;
+    animation: pulseGlow 3s infinite;
 }
-h2, h3 {
-    color: #e4e4e4 !important;
-    text-shadow: 0px 0px 12px rgba(255, 255, 255, 0.15);
+@keyframes pulseGlow {
+    0% { text-shadow: 0 0 8px rgba(127,90,240,0.6); }
+    50% { text-shadow: 0 0 22px rgba(44,182,125,0.9); }
+    100% { text-shadow: 0 0 8px rgba(127,90,240,0.6); }
 }
 
-/* SIDEBAR */
-section[data-testid="stSidebar"] {
-    background: rgba(10, 10, 20, 0.7);
-    backdrop-filter: blur(12px);
-    border-right: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-section[data-testid="stSidebar"] * {
-    color: #f5f5f5 !important;
-}
-
-/* SIDEBAR TITLE */
-section[data-testid="stSidebar"] h1,
-section[data-testid="stSidebar"] h2 {
-    color: #9ae6ff !important;
-    text-shadow: 0 0 8px rgba(0,180,255,0.6);
-}
-
-/* BUTTONS: CYBER NEON */
-.stButton button {
-    background: linear-gradient(135deg, #6927ff, #00d4ff);
-    color: white;
-    padding: 12px 20px;
-    border-radius: 12px;
-    border: none;
-    font-size: 16px;
-    font-weight: 600;
-    transition: 0.25s ease-in-out;
-    box-shadow: 0 0 12px rgba(120, 70, 255, 0.6);
-}
-
-.stButton button:hover {
-    transform: translateY(-3px) scale(1.05);
-    box-shadow: 0 0 20px #00d4ff;
-}
-
-/* DOWNLOAD BUTTONS */
-.stDownloadButton button {
-    background: linear-gradient(135deg, #f7b733, #fc4a1a);
-    color: #000;
-    padding: 10px 16px;
-    border-radius: 12px;
-    border: none;
-    font-weight: 700;
-    transition: 0.25s ease-in-out;
-}
-
-.stDownloadButton button:hover {
-    transform: translateY(-2px) scale(1.04);
-    box-shadow: 0 0 20px rgba(255,150,40,0.7);
-}
-
-/* DATAFRAME TABLE */
-table {
-    color: #ffffff !important;
-}
-
-thead th {
-    background: rgba(255,255,255,0.2) !important;
-    color: #ffffff !important;
-}
-
-tbody td {
-    background: rgba(255,255,255,0.06) !important;
-    color: #cccccc !important;
-}
-
-/* IMAGE BORDER GLOW */
+/* -------------------------- */
+/* 🔥 3) ANIMATED NEON BORDER */
+/* -------------------------- */
 img {
     border-radius: 12px;
-    box-shadow: 0 0 18px rgba(0,255,255,0.15);
+    animation: neonPulse 4s infinite;
+}
+@keyframes neonPulse {
+    0%   { box-shadow: 0px 0px 12px rgba(0,255,255,0.4); }
+    50%  { box-shadow: 0px 0px 26px rgba(0,255,255,0.8); }
+    100% { box-shadow: 0px 0px 12px rgba(0,255,255,0.4); }
 }
 
-/* EXPANDERS */
-.streamlit-expanderHeader {
-    background: rgba(255, 255, 255, 0.1);
-    color: #fff !important;
-    border-radius: 10px;
-    padding: 8px 20px;
-    font-weight: 600;
-    border: 1px solid rgba(255,255,255,0.15);
+/* -------------------------- */
+/* 🔥 4) RIPPLE ANIMATED BUTTON */
+/* -------------------------- */
+.stButton button {
+    position: relative;
+    overflow: hidden;
+}
+.stButton button::after {
+    content: "";
+    position: absolute;
+    width: 200%;
+    height: 200%;
+    top: -50%;
+    left: -50%;
+    background: radial-gradient(circle, rgba(255,255,255,0.3) 10%, transparent 10%);
+    background-size: 25% 25%;
+    opacity: 0;
+    transition: opacity 0.4s;
+}
+.stButton button:hover::after {
+    opacity: 0.4;
+    animation: ripple 1s infinite;
+}
+@keyframes ripple {
+    0% { transform: scale(0.8); }
+    50% { transform: scale(1.2); }
+    100% { transform: scale(0.8); }
+}
+
+/* -------------------------- */
+/* 🔥 5) FADE-IN FOR ALL ELEMENTS */
+/* -------------------------- */
+div, img, button, table {
+    animation: fadeUp 0.7s ease-out;
+}
+@keyframes fadeUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0px); }
+}
+
+/* -------------------------- */
+/* 🔥 6) ANIMATED CYBER GRID BACKGROUND */
+/* -------------------------- */
+.stApp::before {
+    content: "";
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background-image: 
+        linear-gradient(rgba(0,255,255,0.08) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,255,255,0.08) 1px, transparent 1px);
+    background-size: 40px 40px;
+    animation: gridMove 15s linear infinite;
+    pointer-events: none;
+}
+@keyframes gridMove {
+    0% { transform: translateY(0px); }
+    100% { transform: translateY(-80px); }
+}
+
+/* -------------------------- */
+/* 🔥 7) SIDEBAR ICON HOVER ANIMATIONS */
+/* -------------------------- */
+section[data-testid="stSidebar"] div:hover {
+    transform: translateX(4px);
+    transition: 0.3s ease;
 }
 
 </style>
