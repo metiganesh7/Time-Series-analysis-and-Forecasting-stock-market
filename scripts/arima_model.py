@@ -1,32 +1,26 @@
-import numpy as np
-import pandas as pd
-from statsmodels.tsa.arima.model import ARIMA
 import warnings
 warnings.filterwarnings('ignore')
 
 import joblib
 import os
+import pandas as pd
+from statsmodels.tsa.arima.model import ARIMA
 
-def train_arima(train, order=(5,1,0), save_path='models', name='arima_model.pkl'):
-    """
-    Train an ARIMA model and save it to disk.
-    """
+
+def train_arima(train_series, order=(5,1,0), save_path='models', name='arima_model.pkl'):
     os.makedirs(save_path, exist_ok=True)
-    
-    # If train is a DataFrame, convert to Series
-    if isinstance(train, pd.DataFrame):
-        train = train.iloc[:,0]
 
-    model = ARIMA(train, order=order)
-    res = model.fit()
+    # Ensure 1D series
+    if isinstance(train_series, pd.DataFrame):
+        train_series = train_series.squeeze()
 
-    joblib.dump(res, os.path.join(save_path, name))
-    return res
+    model = ARIMA(train_series, order=order)
+    result = model.fit()
+
+    joblib.dump(result, os.path.join(save_path, name))
+    return result
 
 
-def forecast_arima(model_res, steps=30):
-    """
-    Forecast future values using a trained ARIMA model.
-    """
-    pred = model_res.forecast(steps=steps)
-    return pred
+def forecast_arima(model, steps=30):
+    forecast = model.forecast(steps=steps)
+    return forecast.tolist()
