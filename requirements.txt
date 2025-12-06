@@ -9,3 +9,4 @@ plotly
 scikit-learn
 tensorflow
 statsmodels
+pmdarima
