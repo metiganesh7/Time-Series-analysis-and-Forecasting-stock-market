@@ -27,87 +27,142 @@ from sklearn.metrics import mean_squared_error
 # APPLY DARK GLASSMORPHISM THEME
 # --------------------------
 st.markdown("""
-    <style>
+<style>
 
-    /* GLOBAL BACKGROUND */
-    .stApp {
-        background: linear-gradient(135deg, #1b1e23, #2b3038, #131417);
-        color: #f5f6fa !important;
-        font-family: 'Poppins', sans-serif;
-    }
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap');
 
-    /* MAIN BLOCK WRAPPER */
-    .block-container {
-        backdrop-filter: blur(10px);
-        background: rgba(255, 255, 255, 0.05);
-        border-radius: 16px;
-        padding: 2rem;
-        margin-top: 20px;
-    }
+/* GLOBAL SETTINGS */
+.stApp {
+    background: radial-gradient(circle at top left, #0f0f17, #08080f, #000000);
+    font-family: 'Poppins', sans-serif;
+    color: #f1f1f1;
+    animation: fadeIn 1s ease-in-out;
+}
 
-    /* HEADERS */
-    h1, h2, h3, h4, h5 {
-        color: #ffffff !important;
-        font-weight: 600;
-    }
+/* SMOOTH FADE */
+@keyframes fadeIn {
+    from {opacity: 0;}
+    to {opacity: 1;}
+}
 
-    /* SIDEBAR */
-    section[data-testid="stSidebar"] {
-        background: rgba(0, 0, 0, 0.25);
-        backdrop-filter: blur(10px);
-        border-right: 1px solid rgba(255,255,255,0.1);
-    }
+/* FLOATING CARDS WITH GLOW */
+.block-container {
+    background: rgba(20, 20, 30, 0.4);
+    border-radius: 18px;
+    padding: 2rem;
+    margin-top: 20px;
+    border: 1px solid rgba(100, 100, 255, 0.15);
+    backdrop-filter: blur(14px);
+    box-shadow: 0 0 25px rgba(0, 122, 255, 0.15),
+                0 0 45px rgba(0, 122, 255, 0.10);
+    animation: cardFloat 6s ease-in-out infinite alternate;
+}
 
-    section[data-testid="stSidebar"] * {
-        color: #ffffff !important;
-    }
+@keyframes cardFloat {
+    0% { transform: translateY(0px); }
+    50% { transform: translateY(-6px); }
+    100% { transform: translateY(0px); }
+}
 
-    /* BUTTONS */
-    .stButton button {
-        background: linear-gradient(135deg, #6a11cb, #2575fc);
-        color: white;
-        padding: 10px 18px;
-        border-radius: 12px;
-        border: none;
-        transition: 0.3s ease;
-        font-size: 15px;
-        font-weight: 500;
-    }
-    .stButton button:hover {
-        transform: scale(1.05);
-        background: linear-gradient(135deg, #2575fc, #6a11cb);
-    }
+/* HEADERS */
+h1 {
+    background: linear-gradient(90deg, #7f5af0, #2cb67d);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-size: 42px !important;
+    font-weight: 700 !important;
+}
+h2, h3 {
+    color: #e4e4e4 !important;
+    text-shadow: 0px 0px 12px rgba(255, 255, 255, 0.15);
+}
 
-    /* DOWNLOAD BUTTONS */
-    .stDownloadButton button {
-        background: linear-gradient(135deg, #f7971e, #ffd200);
-        color: black;
-        padding: 8px 14px;
-        border-radius: 10px;
-        border: none;
-        font-weight: 600;
-        transition: 0.3s ease;
-    }
-    .stDownloadButton button:hover {
-        transform: scale(1.06);
-        background: linear-gradient(135deg, #ffd200, #f7971e);
-    }
+/* SIDEBAR */
+section[data-testid="stSidebar"] {
+    background: rgba(10, 10, 20, 0.7);
+    backdrop-filter: blur(12px);
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
 
-    /* TABLES */
-    table {
-        color: white !important;
-    }
-    thead th {
-        background: rgba(255,255,255,0.2) !important;
-        color: #f5f6fa !important;
-    }
-    tbody td {
-        background: rgba(255,255,255,0.05) !important;
-        color: #f5f6fa !important;
-    }
+section[data-testid="stSidebar"] * {
+    color: #f5f5f5 !important;
+}
 
-    </style>
+/* SIDEBAR TITLE */
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2 {
+    color: #9ae6ff !important;
+    text-shadow: 0 0 8px rgba(0,180,255,0.6);
+}
+
+/* BUTTONS: CYBER NEON */
+.stButton button {
+    background: linear-gradient(135deg, #6927ff, #00d4ff);
+    color: white;
+    padding: 12px 20px;
+    border-radius: 12px;
+    border: none;
+    font-size: 16px;
+    font-weight: 600;
+    transition: 0.25s ease-in-out;
+    box-shadow: 0 0 12px rgba(120, 70, 255, 0.6);
+}
+
+.stButton button:hover {
+    transform: translateY(-3px) scale(1.05);
+    box-shadow: 0 0 20px #00d4ff;
+}
+
+/* DOWNLOAD BUTTONS */
+.stDownloadButton button {
+    background: linear-gradient(135deg, #f7b733, #fc4a1a);
+    color: #000;
+    padding: 10px 16px;
+    border-radius: 12px;
+    border: none;
+    font-weight: 700;
+    transition: 0.25s ease-in-out;
+}
+
+.stDownloadButton button:hover {
+    transform: translateY(-2px) scale(1.04);
+    box-shadow: 0 0 20px rgba(255,150,40,0.7);
+}
+
+/* DATAFRAME TABLE */
+table {
+    color: #ffffff !important;
+}
+
+thead th {
+    background: rgba(255,255,255,0.2) !important;
+    color: #ffffff !important;
+}
+
+tbody td {
+    background: rgba(255,255,255,0.06) !important;
+    color: #cccccc !important;
+}
+
+/* IMAGE BORDER GLOW */
+img {
+    border-radius: 12px;
+    box-shadow: 0 0 18px rgba(0,255,255,0.15);
+}
+
+/* EXPANDERS */
+.streamlit-expanderHeader {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff !important;
+    border-radius: 10px;
+    padding: 8px 20px;
+    font-weight: 600;
+    border: 1px solid rgba(255,255,255,0.15);
+}
+
+</style>
 """, unsafe_allow_html=True)
+
 
 # --------------------------
 # METRIC FUNCTIONS
