@@ -22,11 +22,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
-
+import streamlit.components.v1 as components
 # --------------------------
 # APPLY DARK GLASSMORPHISM THEME
 # PARTICLE BACKGROUND (STYLE A)
-st.markdown("""
+particle_html = """
 <canvas id="particles"></canvas>
 
 <style>
@@ -34,8 +34,8 @@ st.markdown("""
     position: fixed;
     top: 0;
     left: 0;
-    width: 100%;
-    height: 100%;
+    width: 100vw;
+    height: 100vh;
     z-index: -5;
     pointer-events: none;
 }
@@ -45,117 +45,85 @@ st.markdown("""
 const canvas = document.getElementById('particles');
 const ctx = canvas.getContext('2d');
 
-let particlesArray;
-
-let mouse = {
-    x: null,
-    y: null,
-    radius: 120
-};
-
-window.addEventListener('mousemove', function (event) {
-    mouse.x = event.x;
-    mouse.y = event.y;
-});
-
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
-window.addEventListener('resize', function () {
+let particlesArray = [];
+
+window.addEventListener('resize', () => {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
     init();
 });
 
 class Particle {
-    constructor(x, y, directionX, directionY, size, color) {
-        this.x = x;
-        this.y = y;
-        this.directionX = directionX;
-        this.directionY = directionY;
-        this.size = size;
-        this.color = color;
+    constructor(){
+        this.x = Math.random() * canvas.width;
+        this.y = Math.random() * canvas.height;
+        this.size = Math.random() * 2 + 1;
+        this.speedX = (Math.random() * 0.4) - 0.2;
+        this.speedY = (Math.random() * 0.4) - 0.2;
     }
-    draw() {
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2, false);
+    update(){
+        this.x += this.speedX;
+        this.y += this.speedY;
+
+        if(this.x < 0 || this.x > canvas.width){ this.speedX *= -1; }
+        if(this.y < 0 || this.y > canvas.height){ this.speedY *= -1; }
+    }
+    draw(){
         ctx.fillStyle = "#00eaff";
         ctx.shadowColor = "#00eaff";
         ctx.shadowBlur = 15;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
         ctx.fill();
     }
-    update() {
-        if (this.x > canvas.width || this.x < 0) { this.directionX = -this.directionX; }
-        if (this.y > canvas.height || this.y < 0) { this.directionY = -this.directionY; }
-
-        this.x += this.directionX;
-        this.y += this.directionY;
-
-        // Mouse collision effect
-        let dx = mouse.x - this.x;
-        let dy = mouse.y - this.y;
-        let distance = Math.sqrt(dx * dx + dy * dy);
-        if (distance < mouse.radius) {
-            this.x -= dx / distance;
-            this.y -= dy / distance;
-        }
-        this.draw();
-    }
 }
 
-function init() {
+function init(){
     particlesArray = [];
-    let numberOfParticles = 120;
-
-    for (let i = 0; i < numberOfParticles; i++) {
-        let size = (Math.random() * 2) + 1;
-        let x = Math.random() * (innerWidth - size * 2);
-        let y = Math.random() * (innerHeight - size * 2);
-        let directionX = (Math.random() * 0.4) - 0.2;
-        let directionY = (Math.random() * 0.4) - 0.2;
-        let color = "#00eaff";
-
-        particlesArray.push(new Particle(x, y, directionX, directionY, size, color));
+    let numParticles = 120;
+    for(let i=0; i<numParticles; i++){
+        particlesArray.push(new Particle());
     }
 }
 
-function connect() {
-    let opacity = 1;
-    for (let a = 0; a < particlesArray.length; a++) {
-        for (let b = a; b < particlesArray.length; b++) {
-            let dx = particlesArray[a].x - particlesArray[b].x;
-            let dy = particlesArray[a].y - particlesArray[b].y;
-            let dist = dx * dx + dy * dy;
+function connect(){
+    for(let i=0; i<particlesArray.length; i++){
+        for(let j=i; j<particlesArray.length; j++){
+            let dx = particlesArray[i].x - particlesArray[j].x;
+            let dy = particlesArray[i].y - particlesArray[j].y;
+            let distance = dx*dx + dy*dy;
 
-            if (dist < (canvas.width / 20) * (canvas.height / 20)) {
-                opacity = 0.1;
-                ctx.strokeStyle = "rgba(0, 234, 255," + opacity + ")";
+            if(distance < 9000){
+                ctx.strokeStyle = "rgba(0,234,255,0.1)";
                 ctx.lineWidth = 1;
                 ctx.beginPath();
-                ctx.moveTo(particlesArray[a].x, particlesArray[a].y);
-                ctx.lineTo(particlesArray[b].x, particlesArray[b].y);
+                ctx.moveTo(particlesArray[i].x, particlesArray[i].y);
+                ctx.lineTo(particlesArray[j].x, particlesArray[j].y);
                 ctx.stroke();
             }
         }
     }
 }
 
-function animate() {
-    requestAnimationFrame(animate);
+function animate(){
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    for (let i = 0; i < particlesArray.length; i++) {
-        particlesArray[i].update();
-    }
+    particlesArray.forEach(p => {
+        p.update();
+        p.draw();
+    });
     connect();
+    requestAnimationFrame(animate);
 }
 
 init();
 animate();
-
 </script>
-""", unsafe_allow_html=True)
+"""
 
+components.html(particle_html, height=0, width=0)
 # --------------------------
 # METRIC FUNCTIONS
 # --------------------------
