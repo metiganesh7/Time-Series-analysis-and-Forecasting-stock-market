@@ -1,5 +1,4 @@
-numpy
-pandas
+
 streamlit
 yfinance
 pandas
@@ -9,4 +8,5 @@ plotly
 scikit-learn
 tensorflow
 statsmodels
-pmdarima
+prophet
+joblib
