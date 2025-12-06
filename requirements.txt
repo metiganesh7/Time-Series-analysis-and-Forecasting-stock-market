@@ -10,3 +10,4 @@ tensorflow
 statsmodels
 prophet
 joblib
+nsepython
