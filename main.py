@@ -7,7 +7,7 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 
 # =========================
-# ✅ IMPORT YOUR MODELS
+# ✅ IMPORT MODELS
 # =========================
 import sys, os
 
@@ -23,45 +23,65 @@ from scripts.prophet_model import train_prophet, forecast_prophet
 from scripts.lstm_model import train_lstm, forecast_lstm
 
 # =========================
-# ✅ BUY / SELL SIGNAL LOGIC
+# ✅ BUY / SELL SIGNAL
 # =========================
 def generate_signal(last_price, forecast_price):
     change_pct = ((forecast_price - last_price) / last_price) * 100
-
     if change_pct > 2:
-        return "✅ BUY", change_pct
+        return "BUY", change_pct
     elif change_pct < -2:
-        return "🔻 SELL", change_pct
+        return "SELL", change_pct
     else:
-        return "⏸ HOLD", change_pct
+        return "HOLD", change_pct
 
 # =========================
-# ✅ BASIC UI
+# ✅ TARGET & STOP LOSS
 # =========================
-st.set_page_config(page_title="Stock Forecasting", layout="wide")
+def calculate_target_stop(price, signal, target_pct=5, stop_pct=3):
+    if signal == "BUY":
+        target = price * (1 + target_pct/100)
+        stop = price * (1 - stop_pct/100)
+    elif signal == "SELL":
+        target = price * (1 - target_pct/100)
+        stop = price * (1 + stop_pct/100)
+    else:
+        target, stop = None, None
+    return target, stop
 
-st.markdown("""
-<style>
-html, body, .stApp {
-    background: linear-gradient(135deg, #050a1a, #0b132b);
-    color: #dbe7ff;
-}
-.block-container {
-    background: rgba(255,255,255,0.05);
-    border-radius: 18px;
-    padding: 2rem;
-    box-shadow: 0 0 15px rgba(0,200,255,0.15);
-}
-.stButton button {
-    background: linear-gradient(135deg,#0077ff,#00d4ff);
-    color: white;
-    font-weight: bold;
-    border-radius: 10px;
-}
-</style>
-""", unsafe_allow_html=True)
+# =========================
+# ✅ BACKTESTING LOGIC
+# =========================
+def backtest_strategy(series):
+    capital = 100000
+    position = 0
+    equity = []
 
-st.title("📊 Stock Forecasting Dashboard (Professional Version)")
+    for i in range(1, len(series)):
+        signal = "BUY" if series.iloc[i] > series.iloc[i-1] else "SELL"
+
+        if signal == "BUY" and capital > 0:
+            position = capital / series.iloc[i]
+            capital = 0
+        elif signal == "SELL" and position > 0:
+            capital = position * series.iloc[i]
+            position = 0
+
+        equity.append(capital + position * series.iloc[i])
+
+    equity = pd.Series(equity, index=series.index[1:])
+    returns = equity.pct_change().fillna(0)
+
+    total_return = (equity.iloc[-1] / 100000 - 1) * 100
+    win_rate = (returns > 0).mean() * 100
+    drawdown = (equity / equity.cummax() - 1).min() * 100
+
+    return equity, total_return, win_rate, drawdown
+
+# =========================
+# ✅ UI SETUP
+# =========================
+st.set_page_config(page_title="Stock Forecasting Pro", layout="wide")
+st.title("📊 Stock Forecasting + Trading Strategy Platform")
 
 # =========================
 # ✅ HELPERS
@@ -77,16 +97,13 @@ def detect_price_column(df):
         if c in df.columns:
             return c
     nums = df.select_dtypes(include="number").columns
-    if len(nums) == 0:
-        return None
-    return nums[-1]
+    return nums[-1] if len(nums)>0 else None
 
 def plot_series(train, test, pred, title):
     fig, ax = plt.subplots(figsize=(10,4))
     train.plot(ax=ax, label="Train")
     test.plot(ax=ax, label="Test")
     pred.plot(ax=ax, label="Forecast")
-    ax.set_title(title)
     ax.legend()
     buf = io.BytesIO()
     fig.savefig(buf, format="png")
@@ -95,221 +112,83 @@ def plot_series(train, test, pred, title):
     return buf
 
 # =========================
-# ✅ TAB
+# ✅ UPLOAD CSV
 # =========================
-tab1 = st.tabs(["📂 CSV Forecasting"])[0]
+file = st.file_uploader("📂 Upload Stock CSV", type=["csv"])
+
+if not file:
+    st.stop()
+
+df = pd.read_csv(file)
+df.columns = [c.strip() for c in df.columns]
+
+date_col = detect_date_column(df)
+price_col = detect_price_column(df)
+
+df[date_col] = pd.to_datetime(df[date_col])
+df.set_index(date_col, inplace=True)
+
+series = df[price_col].astype(float)
+series = prepare_series(df, price_col)
+
+train, test = train_test_split_series(series, 0.2)
 
 # =========================
-# ✅ TAB 1 — FULL FORECASTING
+# ✅ FORECAST HORIZON
 # =========================
-with tab1:
-    st.subheader("📂 Upload CSV for Forecasting")
+horizon = st.selectbox("📅 Forecast Days", [7,15,30,60], index=2)
 
-    file = st.file_uploader("Upload your stock CSV", type=["csv"])
+if st.button("🚀 Run Forecast + Trading System"):
 
-    if not file:
-        st.info("Upload a CSV to begin.")
-        st.stop()
-
-    df = pd.read_csv(file)
-    df.columns = [c.strip() for c in df.columns]
-
-    st.write("✅ Detected Columns:", list(df.columns))
-
-    date_col = detect_date_column(df)
-    price_col = detect_price_column(df)
-
-    if price_col is None:
-        st.error("❌ No numeric price column found.")
-        st.stop()
-
-    st.success(f"✅ Using Date: `{date_col}` | Price: `{price_col}`")
-
-    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-    df = df.dropna(subset=[date_col, price_col])
-    df.set_index(date_col, inplace=True)
-
-    series = df[price_col].astype(float)
-
-    st.line_chart(series.tail(300))
-
-    series = prepare_series(df, price_col)
-    train, test = train_test_split_series(series, 0.2)
+    preds = {}
 
     # =========================
-    # ✅ FORECAST HORIZON
+    # ✅ ARIMA FORECAST
     # =========================
-    horizon = st.selectbox(
-        "📅 Select Forecast Horizon (Days)",
-        [7, 15, 30, 60],
-        index=2
-    )
+    arima = train_arima(train, order=(5,1,0))
+    future = forecast_arima(arima, horizon)
 
-    if st.button("🚀 Run Forecast Models"):
+    future_index = pd.date_range(series.index[-1] + pd.Timedelta(days=1), periods=horizon)
+    preds["ARIMA"] = pd.Series(future, index=future_index)
 
-        preds = {}
-        metrics = {}
-        errors = {}
+    st.image(plot_series(train, test, preds["ARIMA"], "ARIMA Forecast"))
 
-        # ============ ARIMA ============
-        try:
-            arima = train_arima(train, order=(5,1,0))
-            pred = forecast_arima(arima, horizon)
+    # =========================
+    # ✅ BUY / SELL SIGNAL
+    # =========================
+    last_price = series.iloc[-1]
+    future_price = preds["ARIMA"].iloc[-1]
+    signal, strength = generate_signal(last_price, future_price)
 
-            future_index = pd.date_range(
-                start=series.index[-1] + pd.Timedelta(days=1),
-                periods=horizon,
-                freq="D"
-            )
+    st.subheader("📢 Trading Signal")
+    st.metric("Expected Change %", f"{strength:.2f}%")
+    st.success(f"Signal → {signal}")
 
-            preds["ARIMA"] = pd.Series(pred, index=future_index)
-            st.success("✅ ARIMA success")
-        except Exception as e:
-            errors["ARIMA"] = str(e)
+    # =========================
+    # ✅ TARGET & STOP LOSS
+    # =========================
+    target, stop = calculate_target_stop(last_price, signal)
 
-        # ============ SARIMA ============
-        try:
-            sarima = train_sarima(train)
-            pred = forecast_sarima(sarima, horizon)
-            preds["SARIMA"] = pd.Series(pred, index=future_index)
-            st.success("✅ SARIMA success")
-        except Exception as e:
-            errors["SARIMA"] = str(e)
+    if target:
+        st.subheader("🎯 Target & 🛑 Stop Loss")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Current Price", f"{last_price:.2f}")
+        col2.metric("Target", f"{target:.2f}")
+        col3.metric("Stop Loss", f"{stop:.2f}")
 
-        # ============ PROPHET ============
-        try:
-            prophet = train_prophet(train)
-            pvals = forecast_prophet(prophet, horizon)
-            preds["Prophet"] = pd.Series(pvals.values, index=future_index)
-            st.success("✅ Prophet success")
-        except Exception as e:
-            errors["Prophet"] = str(e)
+        rr = abs((target-last_price)/(last_price-stop)) if signal=="BUY" else 0
+        st.metric("Risk-Reward Ratio", f"{rr:.2f}")
 
-        # ============ LSTM (CLOUD SAFE) ============
-        try:
-            scaler = MinMaxScaler()
-            scaled = scaler.fit_transform(series.values.reshape(-1,1))
-            train_scaled = scaled[:len(train)]
+    # =========================
+    # ✅ BACKTESTING
+    # =========================
+    st.subheader("📊 Trading Strategy Backtesting")
 
-            lstm_model = train_lstm(
-                train_scaled,
-                seq_len=20,
-                epochs=2,
-                batch_size=8
-            )
+    equity, total_return, win_rate, drawdown = backtest_strategy(test)
 
-            lvals = forecast_lstm(lstm_model, scaled, scaler, 20, horizon)
-            preds["LSTM"] = pd.Series(lvals, index=future_index)
-            st.success("✅ LSTM success")
-        except Exception as e:
-            errors["LSTM"] = str(e)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Return %", f"{total_return:.2f}%")
+    col2.metric("Win Rate %", f"{win_rate:.2f}%")
+    col3.metric("Max Drawdown %", f"{drawdown:.2f}%")
 
-        if len(preds) == 0:
-            st.error("❌ ALL MODELS FAILED")
-            st.code(errors)
-            st.stop()
-
-        # =========================
-        # ✅ INDIVIDUAL FORECASTS
-        # =========================
-        st.subheader("📊 Individual Forecasts")
-
-        for name, p in preds.items():
-            img = plot_series(train, test, p, name)
-            st.image(img)
-
-            st.download_button(
-                f"⬇ Download {name} Forecast",
-                img.getvalue(),
-                f"{name}_forecast.png",
-                "image/png"
-            )
-
-        # =========================
-        # ✅ MODEL ACCURACY
-        # =========================
-        st.subheader("📈 Model Accuracy")
-
-        for name, p in preds.items():
-            align_len = min(len(test), len(p))
-            rmse = np.sqrt(mean_squared_error(test.values[:align_len], p.values[:align_len]))
-            mse = mean_squared_error(test.values[:align_len], p.values[:align_len])
-            mape = np.mean(np.abs((test.values[:align_len] - p.values[:align_len]) / test.values[:align_len])) * 100
-
-            metrics[name] = {
-                "RMSE": rmse,
-                "MSE": mse,
-                "MAPE (%)": mape
-            }
-
-        metrics_df = pd.DataFrame(metrics).T
-        metrics_df["Rank"] = metrics_df["RMSE"].rank()
-
-        st.dataframe(metrics_df.style.background_gradient(cmap="Blues"))
-
-        best_model = metrics_df.sort_values("RMSE").index[0]
-        st.success(f"🏆 Best Model: {best_model}")
-
-        csv_metrics = metrics_df.to_csv().encode("utf-8")
-        st.download_button(
-            "⬇ Download Model Accuracy CSV",
-            csv_metrics,
-            "model_accuracy.csv",
-            "text/csv"
-        )
-
-        # =========================
-        # ✅ COMBINED FORECAST
-        # =========================
-        st.subheader("📊 Combined Forecast")
-
-        fig, ax = plt.subplots(figsize=(12,5))
-        series.plot(ax=ax, label="Actual")
-
-        for name, p in preds.items():
-            p.plot(ax=ax, label=name)
-
-        ax.legend()
-        ax.set_title("Combined Forecast Comparison")
-
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png")
-        buf.seek(0)
-        plt.close()
-
-        st.image(buf)
-
-        st.download_button(
-            "⬇ Download Combined Forecast",
-            buf.getvalue(),
-            "combined_forecast.png",
-            "image/png"
-        )
-
-        # =========================
-        # ✅ BUY / SELL SIGNAL
-        # =========================
-        if "ARIMA" in preds:
-            last_price = series.iloc[-1]
-            future_price = preds["ARIMA"].iloc[-1]
-
-            signal, strength = generate_signal(last_price, future_price)
-
-            st.markdown("---")
-            st.subheader("📢 AI Trading Signal")
-            st.metric("Expected Change (%)", f"{strength:.2f}%")
-
-            if "BUY" in signal:
-                st.success(f"🚀 {signal} — Strong upward momentum expected")
-            elif "SELL" in signal:
-                st.error(f"⚠ {signal} — Downward momentum detected")
-            else:
-                st.warning(f"⏸ {signal} — Market moving sideways")
-
-        # =========================
-        # ✅ ERRORS (IF ANY)
-        # =========================
-        if len(errors) > 0:
-            st.subheader("⚠ Model Errors")
-            for k, v in errors.items():
-                st.code(f"{k} → {v}")
+    st.line_chart(equity)
