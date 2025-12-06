@@ -3,7 +3,16 @@ import argparse
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), 'scripts'))
 from scripts.utils import download_data, prepare_series, train_test_split_series
-from scripts.arima_model import train_arima, forecast_arima
+import traceback
+import streamlit as st
+
+try:
+    from scripts.arima_model import train_arima, forecast_arima
+except Exception as e:
+    st.error("Error inside arima_model.py:")
+    st.error(traceback.format_exc())
+    raise
+
 from scripts.sarima_model import train_sarima, forecast_sarima
 from scripts.prophet_model import train_prophet, forecast_prophet
 from scripts.lstm_model import train_lstm, forecast_lstm
