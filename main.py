@@ -25,117 +25,136 @@ from sklearn.metrics import mean_squared_error
 
 # --------------------------
 # APPLY DARK GLASSMORPHISM THEME
-# --------------------------
+# PARTICLE BACKGROUND (STYLE A)
 st.markdown("""
+<canvas id="particles"></canvas>
+
 <style>
-
-/* -------------------------- */
-/* 🔥 1) CARD 3D HOVER EFFECT */
-/* -------------------------- */
-.block-container {
-    transition: transform 0.4s ease, box-shadow 0.4s ease;
-}
-.block-container:hover {
-    transform: translateY(-8px) scale(1.01);
-    box-shadow: 0 0 30px rgba(0, 200, 255, 0.35);
-}
-
-/* -------------------------- */
-/* 🔥 2) PULSING HEADER GLOW */
-/* -------------------------- */
-h1 {
-    animation: pulseGlow 3s infinite;
-}
-@keyframes pulseGlow {
-    0% { text-shadow: 0 0 8px rgba(127,90,240,0.6); }
-    50% { text-shadow: 0 0 22px rgba(44,182,125,0.9); }
-    100% { text-shadow: 0 0 8px rgba(127,90,240,0.6); }
-}
-
-/* -------------------------- */
-/* 🔥 3) ANIMATED NEON BORDER */
-/* -------------------------- */
-img {
-    border-radius: 12px;
-    animation: neonPulse 4s infinite;
-}
-@keyframes neonPulse {
-    0%   { box-shadow: 0px 0px 12px rgba(0,255,255,0.4); }
-    50%  { box-shadow: 0px 0px 26px rgba(0,255,255,0.8); }
-    100% { box-shadow: 0px 0px 12px rgba(0,255,255,0.4); }
-}
-
-/* -------------------------- */
-/* 🔥 4) RIPPLE ANIMATED BUTTON */
-/* -------------------------- */
-.stButton button {
-    position: relative;
-    overflow: hidden;
-}
-.stButton button::after {
-    content: "";
-    position: absolute;
-    width: 200%;
-    height: 200%;
-    top: -50%;
-    left: -50%;
-    background: radial-gradient(circle, rgba(255,255,255,0.3) 10%, transparent 10%);
-    background-size: 25% 25%;
-    opacity: 0;
-    transition: opacity 0.4s;
-}
-.stButton button:hover::after {
-    opacity: 0.4;
-    animation: ripple 1s infinite;
-}
-@keyframes ripple {
-    0% { transform: scale(0.8); }
-    50% { transform: scale(1.2); }
-    100% { transform: scale(0.8); }
-}
-
-/* -------------------------- */
-/* 🔥 5) FADE-IN FOR ALL ELEMENTS */
-/* -------------------------- */
-div, img, button, table {
-    animation: fadeUp 0.7s ease-out;
-}
-@keyframes fadeUp {
-    from { opacity: 0; transform: translateY(8px); }
-    to { opacity: 1; transform: translateY(0px); }
-}
-
-/* -------------------------- */
-/* 🔥 6) ANIMATED CYBER GRID BACKGROUND */
-/* -------------------------- */
-.stApp::before {
-    content: "";
+#particles {
     position: fixed;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    background-image: 
-        linear-gradient(rgba(0,255,255,0.08) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0,255,255,0.08) 1px, transparent 1px);
-    background-size: 40px 40px;
-    animation: gridMove 15s linear infinite;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -5;
     pointer-events: none;
 }
-@keyframes gridMove {
-    0% { transform: translateY(0px); }
-    100% { transform: translateY(-80px); }
-}
-
-/* -------------------------- */
-/* 🔥 7) SIDEBAR ICON HOVER ANIMATIONS */
-/* -------------------------- */
-section[data-testid="stSidebar"] div:hover {
-    transform: translateX(4px);
-    transition: 0.3s ease;
-}
-
 </style>
-""", unsafe_allow_html=True)
 
+<script>
+const canvas = document.getElementById('particles');
+const ctx = canvas.getContext('2d');
+
+let particlesArray;
+
+let mouse = {
+    x: null,
+    y: null,
+    radius: 120
+};
+
+window.addEventListener('mousemove', function (event) {
+    mouse.x = event.x;
+    mouse.y = event.y;
+});
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+window.addEventListener('resize', function () {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    init();
+});
+
+class Particle {
+    constructor(x, y, directionX, directionY, size, color) {
+        this.x = x;
+        this.y = y;
+        this.directionX = directionX;
+        this.directionY = directionY;
+        this.size = size;
+        this.color = color;
+    }
+    draw() {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2, false);
+        ctx.fillStyle = "#00eaff";
+        ctx.shadowColor = "#00eaff";
+        ctx.shadowBlur = 15;
+        ctx.fill();
+    }
+    update() {
+        if (this.x > canvas.width || this.x < 0) { this.directionX = -this.directionX; }
+        if (this.y > canvas.height || this.y < 0) { this.directionY = -this.directionY; }
+
+        this.x += this.directionX;
+        this.y += this.directionY;
+
+        // Mouse collision effect
+        let dx = mouse.x - this.x;
+        let dy = mouse.y - this.y;
+        let distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < mouse.radius) {
+            this.x -= dx / distance;
+            this.y -= dy / distance;
+        }
+        this.draw();
+    }
+}
+
+function init() {
+    particlesArray = [];
+    let numberOfParticles = 120;
+
+    for (let i = 0; i < numberOfParticles; i++) {
+        let size = (Math.random() * 2) + 1;
+        let x = Math.random() * (innerWidth - size * 2);
+        let y = Math.random() * (innerHeight - size * 2);
+        let directionX = (Math.random() * 0.4) - 0.2;
+        let directionY = (Math.random() * 0.4) - 0.2;
+        let color = "#00eaff";
+
+        particlesArray.push(new Particle(x, y, directionX, directionY, size, color));
+    }
+}
+
+function connect() {
+    let opacity = 1;
+    for (let a = 0; a < particlesArray.length; a++) {
+        for (let b = a; b < particlesArray.length; b++) {
+            let dx = particlesArray[a].x - particlesArray[b].x;
+            let dy = particlesArray[a].y - particlesArray[b].y;
+            let dist = dx * dx + dy * dy;
+
+            if (dist < (canvas.width / 20) * (canvas.height / 20)) {
+                opacity = 0.1;
+                ctx.strokeStyle = "rgba(0, 234, 255," + opacity + ")";
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(particlesArray[a].x, particlesArray[a].y);
+                ctx.lineTo(particlesArray[b].x, particlesArray[b].y);
+                ctx.stroke();
+            }
+        }
+    }
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    for (let i = 0; i < particlesArray.length; i++) {
+        particlesArray[i].update();
+    }
+    connect();
+}
+
+init();
+animate();
+
+</script>
+""", unsafe_allow_html=True)
 
 # --------------------------
 # METRIC FUNCTIONS
