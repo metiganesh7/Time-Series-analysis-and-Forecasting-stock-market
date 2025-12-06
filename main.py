@@ -27,126 +27,114 @@ import streamlit.components.v1 as components
 # APPLY DARK GLASSMORPHISM THEME
 # PARTICLE BACKGROUND (STYLE A)
 
-components.html("<div style='padding:20px;background:#021; color:#0ff'>If you see this box the components API works.</div>", height=80)
-components.html("""
-<!DOCTYPE html>
-<html>
-<head>
+st.markdown("""
 <style>
-html, body {
-    margin: 0;
-    height: 100%;
-    overflow: hidden;
+/* ---------- Full-page animated background (CSS only) ---------- */
+.stApp {
+  position: relative;
+  overflow: hidden;
+  background: radial-gradient(circle at 10% 10%, #061226 0%, #02040a 35%, #02030a 100%);
+  color: #e6eef8;
 }
 
-/* FULL SCREEN PARTICLE CANVAS */
-#particle-canvas {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: -1000; /* BEHIND STREAMLIT */
-    pointer-events: none;
+/* layered particle fields using radial-gradients */
+.stApp::before{
+  content: "";
+  position: fixed;
+  top: -10%;
+  left: -10%;
+  width: 220%;
+  height: 220%;
+  z-index: -3;
+  background-image:
+    radial-gradient(circle, rgba(0,230,255,0.10) 1px, transparent 1px),
+    radial-gradient(circle, rgba(0,180,255,0.07) 1px, transparent 1px),
+    radial-gradient(circle, rgba(180,240,255,0.03) 1px, transparent 1px);
+  background-size: 120px 120px, 80px 80px, 50px 50px;
+  animation: particleMove 30s linear infinite;
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+/* subtle additional moving layer */
+.stApp::after{
+  content: "";
+  position: fixed;
+  top: -10%;
+  left: -10%;
+  width: 220%;
+  height: 220%;
+  z-index: -2;
+  background-image:
+    linear-gradient(90deg, rgba(255,255,255,0.01) 0%, transparent 40%),
+    radial-gradient(circle at 30% 20%, rgba(0,255,200,0.02), transparent 10%);
+  background-size: 400px 400px;
+  animation: drift 60s linear infinite;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+@keyframes particleMove {
+  0%   { transform: translate(0px, 0px) rotate(0deg) scale(1); }
+  25%  { transform: translate(-40px, -20px) rotate(0.01turn) scale(1.01); }
+  50%  { transform: translate(-80px, -40px) rotate(0.02turn) scale(1); }
+  75%  { transform: translate(-40px, -20px) rotate(0.01turn) scale(0.99); }
+  100% { transform: translate(0px, 0px) rotate(0turn) scale(1); }
+}
+
+@keyframes drift {
+  0%   { transform: translate(0px, 0px) rotate(0deg); }
+  50%  { transform: translate(-80px, -40px) rotate(0.005turn); }
+  100% { transform: translate(0px, 0px) rotate(0deg); }
+}
+
+/* faint moving grid for depth */
+.stApp .grid {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(rgba(0,255,255,0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,255,255,0.02) 1px, transparent 1px);
+  background-size: 200px 200px;
+  animation: gridScroll 40s linear infinite;
+  pointer-events: none;
+  opacity: 0.45;
+}
+
+@keyframes gridScroll {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-60px); }
+  100% { transform: translateY(0px); }
+}
+
+/* optional glow for images and charts */
+img, .stImage, .element-container img {
+  box-shadow: 0 10px 30px rgba(0,210,255,0.08);
+  border-radius: 12px;
+  transition: transform 0.25s, box-shadow 0.25s;
+}
+img:hover, .stImage:hover {
+  transform: translateY(-6px) scale(1.01);
+  box-shadow: 0 20px 60px rgba(0,210,255,0.14);
+}
+
+/* keep content readable */
+.block-container {
+  backdrop-filter: blur(6px) saturate(1.1);
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.03);
+}
+
+/* small performance note */
+@media (max-width: 600px) {
+  .stApp::before, .stApp::after { display: none; }
 }
 </style>
-</head>
 
-<body>
-<canvas id="particle-canvas"></canvas>
-
-<script>
-const canvas = document.getElementById('particle-canvas');
-const ctx = canvas.getContext('2d');
-
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
-
-let particles = [];
-
-// PARTICLE CLASS
-class Particle {
-    constructor() {
-        this.x = Math.random() * canvas.width;
-        this.y = Math.random() * canvas.height;
-        this.size = Math.random() * 2 + 1;
-        this.speedX = (Math.random() * 0.6) - 0.3;
-        this.speedY = (Math.random() * 0.6) - 0.3;
-    }
-
-    update() {
-        this.x += this.speedX;
-        this.y += this.speedY;
-
-        // Bounce at borders
-        if (this.x < 0 || this.x > canvas.width) this.speedX *= -1;
-        if (this.y < 0 || this.y > canvas.height) this.speedY *= -1;
-    }
-
-    draw() {
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-        ctx.fillStyle = "rgba(0, 255, 255, 0.85)";
-        ctx.shadowColor = "#00ffff";
-        ctx.shadowBlur = 15;
-        ctx.fill();
-    }
-}
-
-function initParticles() {
-    particles = [];
-    for (let i = 0; i < 140; i++) {
-        particles.push(new Particle());
-    }
-}
-
-function connectParticles() {
-    for (let a = 0; a < particles.length; a++) {
-        for (let b = a; b < particles.length; b++) {
-            let dx = particles[a].x - particles[b].x;
-            let dy = particles[a].y - particles[b].y;
-            let distance = dx * dx + dy * dy;
-
-            if (distance < 9000) {
-                ctx.strokeStyle = "rgba(0,255,255,0.12)";
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                ctx.moveTo(particles[a].x, particles[a].y);
-                ctx.lineTo(particles[b].x, particles[b].y);
-                ctx.stroke();
-            }
-        }
-    }
-}
-
-function animate() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    particles.forEach(p => {
-        p.update();
-        p.draw();
-    });
-
-    connectParticles();
-    requestAnimationFrame(animate);
-}
-
-window.addEventListener('resize', () => {
-    canvas.width = innerWidth;
-    canvas.height = innerHeight;
-    initParticles();
-});
-
-initParticles();
-animate();
-
-</script>
-</body>
-</html>
-""",
-height=0,  # HTML renders globally, height 0 keeps layout clean
-width=0
-)
+<div class="grid"></div>
+""", unsafe_allow_html=True)
 # --------------------------
 # METRIC FUNCTIONS
 # --------------------------
