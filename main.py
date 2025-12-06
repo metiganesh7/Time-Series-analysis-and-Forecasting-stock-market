@@ -26,8 +26,7 @@ import streamlit.components.v1 as components
 # --------------------------
 # APPLY DARK GLASSMORPHISM THEME
 # PARTICLE BACKGROUND (STYLE A)
-import streamlit.components.v1 as components
-st.write("components.html test:")
+
 components.html("<div style='padding:20px;background:#021; color:#0ff'>If you see this box the components API works.</div>", height=80)
 components.html("""
 <!DOCTYPE html>
