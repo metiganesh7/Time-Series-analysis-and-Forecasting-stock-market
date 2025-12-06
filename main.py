@@ -1,139 +1,77 @@
-# app.py (FULL replacement)
+# main.py  (FULL production-ready dashboard)
 import sys
 import os
 import io
+import traceback
 import datetime as dt
 
-# ensure scripts folder is importable
+# Ensure scripts dir is importable
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS_DIR = os.path.join(BASE_DIR, "scripts")
 if SCRIPTS_DIR not in sys.path:
     sys.path.append(SCRIPTS_DIR)
 
-# Import model scripts (must exist)
-from scripts.utils import prepare_series, train_test_split_series
-from scripts.arima_model import train_arima, forecast_arima
-from scripts.sarima_model import train_sarima, forecast_sarima
-from scripts.prophet_model import train_prophet, forecast_prophet
-from scripts.lstm_model import train_lstm, forecast_lstm
-
 import streamlit as st
+st.set_page_config(page_title="Stock Forecasting + Groww Charts", layout="wide")
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
+from sklearn.preprocessing import MinMaxScaler
 
-# Try to import plotly; if not available, we'll fallback to matplotlib visuals
-PLOTLY_AVAILABLE = True
+# Try to import optional libraries and scripts with safe fallbacks
+PLOTLY_AVAILABLE = False
+KALeIDO_AVAILABLE = False
 try:
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
+    PLOTLY_AVAILABLE = True
+    # quick kaleido test will be done later when exporting
 except Exception:
     PLOTLY_AVAILABLE = False
 
-# Try to make plotly to_image available (kaleido). We'll test later when exporting.
-KALeIDO_AVAILABLE = True
-if PLOTLY_AVAILABLE:
-    try:
-        # test to_image
-        fig_test = go.Figure()
-        fig_test.to_image(format="png")
-    except Exception:
-        KALeIDO_AVAILABLE = False
+# Import model helper scripts (wrap in try to avoid crash)
+_import_errors = []
+train_arima = forecast_arima = None
+train_sarima = forecast_sarima = None
+train_prophet = forecast_prophet = None
+train_lstm = forecast_lstm = None
+prepare_series = train_test_split_series = None
 
-# --------------------------
-# THEME + RELIABLE ANIMATED BACKGROUND (CSS ONLY)
-# --------------------------
-st.set_page_config(page_title="Forecasting + Groww Charts", layout="wide")
-st.markdown("""
-<style>
-/* Base app look */
-.stApp {
-    position: relative;
-    overflow: hidden;
-    background: radial-gradient(circle at 10% 10%, #061226 0%, #02040a 35%, #02030a 100%);
-    color: #e6eef8;
-    font-family: "Poppins", sans-serif;
-}
+try:
+    from scripts.utils import prepare_series, train_test_split_series
+except Exception as e:
+    _import_errors.append(f"scripts.utils import error: {e}")
 
-/* Particle-like layered animated blobs (CSS-only, reliable) */
-.stApp::before{
-  content: "";
-  position: fixed;
-  top: -10%;
-  left: -10%;
-  width: 220%;
-  height: 220%;
-  z-index: -3;
-  background-image:
-    radial-gradient(circle, rgba(0,230,255,0.10) 1px, transparent 1px),
-    radial-gradient(circle, rgba(0,180,255,0.07) 1px, transparent 1px),
-    radial-gradient(circle, rgba(180,240,255,0.03) 1px, transparent 1px);
-  background-size: 120px 120px, 80px 80px, 50px 50px;
-  animation: particleMove 30s linear infinite;
-  opacity: 0.9;
-  pointer-events: none;
-}
+try:
+    from scripts.arima_model import train_arima, forecast_arima
+except Exception as e:
+    _import_errors.append(f"scripts.arima_model import error: {e}")
 
-.stApp::after{
-  content: "";
-  position: fixed;
-  top: -10%;
-  left: -10%;
-  width: 220%;
-  height: 220%;
-  z-index: -2;
-  background-image:
-    linear-gradient(90deg, rgba(255,255,255,0.01) 0%, transparent 40%),
-    radial-gradient(circle at 30% 20%, rgba(0,255,200,0.02), transparent 10%);
-  background-size: 400px 400px;
-  animation: drift 60s linear infinite;
-  opacity: 0.7;
-  pointer-events: none;
-}
+try:
+    from scripts.sarima_model import train_sarima, forecast_sarima
+except Exception as e:
+    _import_errors.append(f"scripts.sarima_model import error: {e}")
 
-@keyframes particleMove { 0%{transform:translate(0,0)} 50%{transform:translate(-60px,-30px)} 100%{transform:translate(0,0)} }
-@keyframes drift { 0%{transform:translate(0,0)} 50%{transform:translate(-80px,-40px)} 100%{transform:translate(0,0)} }
+try:
+    from scripts.prophet_model import train_prophet, forecast_prophet
+except Exception as e:
+    _import_errors.append(f"scripts.prophet_model import error: {e}")
 
-/* grid depth */
-.stApp .grid {
-  position: fixed; inset:0; z-index:-1;
-  background-image:
-    linear-gradient(rgba(0,255,255,0.02) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0,255,255,0.02) 1px, transparent 1px);
-  background-size: 200px 200px;
-  animation: gridScroll 40s linear infinite;
-  opacity: 0.45;
-}
-@keyframes gridScroll { 0%{transform:translateY(0)} 50%{transform:translateY(-60px)} 100%{transform:translateY(0)} }
+try:
+    from scripts.lstm_model import train_lstm, forecast_lstm
+except Exception as e:
+    _import_errors.append(f"scripts.lstm_model import error: {e}")
 
-/* readable cards */
-.block-container {
-  backdrop-filter: blur(6px) saturate(1.1);
-  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
-  border-radius: 14px;
-  border: 1px solid rgba(255,255,255,0.03);
-}
-
-/* buttons */
-.stButton button { background: linear-gradient(135deg,#6a11cb,#00d4ff); color:white; padding:10px 16px; border-radius:10px; border:none; font-weight:600;}
-.stDownloadButton button { background: linear-gradient(135deg,#ffbe0b,#fb5607); color:black; padding:8px 14px; border-radius:10px; border:none; font-weight:700;}
-
-/* small screens */
-@media (max-width:600px){ .stApp::before, .stApp::after { display:none; } }
-</style>
-<div class="grid"></div>
-""", unsafe_allow_html=True)
-
-# --------------------------
-# Metric functions
-# --------------------------
+# ---------------------------
+# Helper metrics / plotting
+# ---------------------------
 def RMSE(actual, predicted):
     return float(np.sqrt(mean_squared_error(np.array(actual), np.array(predicted))))
 
 def MSE(actual, predicted):
-    return float(mean_squared_error(np.array(actual), np.array(predicted)))
+    return float(mean_squared_error(np.array(actual), np.array(predicted))))
 
 def MAPE(actual, predicted):
     actual = np.array(actual).astype(float)
@@ -143,25 +81,6 @@ def MAPE(actual, predicted):
         actual = actual.copy()
         actual[mask] = 1e-8
     return float(np.mean(np.abs((actual - predicted) / actual)) * 100)
-
-# --------------------------
-# Helpers
-# --------------------------
-def detect_date_column(df):
-    for col in df.columns:
-        if "date" in col.lower() or "time" in col.lower():
-            return col
-    return df.columns[0]
-
-def detect_price_column(df):
-    candidates = ["Close","Adj Close","close","price","Close Price"]
-    for c in candidates:
-        if c in df.columns:
-            return c
-    numeric = df.select_dtypes(include="number").columns
-    if len(numeric) == 0:
-        raise ValueError("No numeric columns found")
-    return numeric[-1]
 
 def plot_series_buf(train, test, pred, title):
     fig, ax = plt.subplots(figsize=(10,4))
@@ -223,10 +142,10 @@ def create_radar_chart_buf(metrics_df):
     plt.close(fig)
     return buf
 
-# --------------------------
-# Groww-style charts (plotly if available; fallback to matplotlib)
-# --------------------------
-def groww_charts_figure(df, price_col, chart_type="Line"):
+# ---------------------------
+# Groww-style charts helper (Plotly preferred)
+# ---------------------------
+def groww_chart(df, price_col, chart_type="Line"):
     df = df.copy()
     df["Date"] = df.index
     if PLOTLY_AVAILABLE:
@@ -258,14 +177,13 @@ def groww_charts_figure(df, price_col, chart_type="Line"):
                               paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
             return fig
     else:
-        # fallback: create simple matplotlib figure and return it as BytesIO buffer (not a plotly fig)
-        if chart_type in ("Line", "Area"):
+        # fallback to matplotlib image buffer for line/area
+        if chart_type in ("Line","Area"):
             fig, ax = plt.subplots(figsize=(12,5))
             ax.plot(df.index, df[price_col], color="#00E6FF", linewidth=2)
             if chart_type == "Area":
                 ax.fill_between(df.index, df[price_col], color="#00B4FF", alpha=0.2)
-            ax.set_title(f"Groww-Style {chart_type} Chart (matplotlib fallback)")
-            ax.grid(False)
+            ax.set_title(f"Groww-Style {chart_type} Chart (fallback)")
             buf = io.BytesIO()
             fig.savefig(buf, format="png", bbox_inches="tight")
             buf.seek(0)
@@ -274,208 +192,343 @@ def groww_charts_figure(df, price_col, chart_type="Line"):
         else:
             return None
 
-# --------------------------
-# Streamlit UI
-# --------------------------
-st.title("📈 Stock Forecasting Dashboard with Groww-style Charts")
+# ---------------------------
+# UI: theme CSS (reliable CSS-only background)
+# ---------------------------
+st.markdown("""
+<style>
+/* Dark glass + animated blobs (CSS only) */
+.stApp {
+  position: relative;
+  overflow: hidden;
+  background: radial-gradient(circle at 10% 10%, #061226 0%, #02040a 35%, #02030a 100%);
+  color: #e6eef8;
+  font-family: "Poppins", sans-serif;
+}
+.stApp::before{
+  content: "";
+  position: fixed;
+  top: -10%; left:-10%;
+  width:220%; height:220%;
+  z-index:-3;
+  background-image:
+    radial-gradient(circle, rgba(0,230,255,0.10) 1px, transparent 1px),
+    radial-gradient(circle, rgba(0,180,255,0.07) 1px, transparent 1px),
+    radial-gradient(circle, rgba(180,240,255,0.03) 1px, transparent 1px);
+  background-size:120px 120px,80px 80px,50px 50px;
+  animation: particleMove 30s linear infinite;
+  opacity:0.9; pointer-events:none;
+}
+.stApp::after{
+  content: "";
+  position: fixed;
+  top: -10%; left:-10%;
+  width:220%; height:220%;
+  z-index:-2;
+  background-image:
+    linear-gradient(90deg, rgba(255,255,255,0.01) 0%, transparent 40%),
+    radial-gradient(circle at 30% 20%, rgba(0,255,200,0.02), transparent 10%);
+  background-size:400px 400px;
+  animation:drift 60s linear infinite;
+  opacity:0.7; pointer-events:none;
+}
+@keyframes particleMove { 0%{transform:translate(0,0)}50%{transform:translate(-60px,-30px)}100%{transform:translate(0,0)} }
+@keyframes drift {0%{transform:translate(0,0)}50%{transform:translate(-80px,-40px)}100%{transform:translate(0,0)}}
+.block-container { backdrop-filter: blur(6px) saturate(1.1); background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); border-radius:14px; border:1px solid rgba(255,255,255,0.03); }
+.stButton button { background: linear-gradient(135deg,#6a11cb,#00d4ff); color:white; padding:10px 16px; border-radius:10px; border:none; font-weight:600;}
+.stDownloadButton button { background: linear-gradient(135deg,#ffbe0b,#fb5607); color:black; padding:8px 14px; border-radius:10px; border:none; font-weight:700;}
+@media (max-width:600px){ .stApp::before, .stApp::after { display:none; } }
+</style>
+""", unsafe_allow_html=True)
 
-st.sidebar.header("Upload CSV")
-uploaded = st.sidebar.file_uploader("Upload CSV file (must include Date + Price)", type=["csv"])
-if not uploaded:
-    st.warning("Please upload a CSV file to continue.")
-    st.stop()
+# ---------------------------
+# Top-level UI and import warnings
+# ---------------------------
+st.title("📈 Stock Forecasting Dashboard — Groww-style charts + Model comparison")
 
-# read CSV
-try:
-    df = pd.read_csv(uploaded)
-except Exception as e:
-    st.error(f"Failed to read CSV: {e}")
-    st.stop()
+if _import_errors:
+    st.warning("Some script imports failed. Models may be unavailable. See below.")
+    for err in _import_errors:
+        st.text(err)
 
+# Sidebar: choose data source
+st.sidebar.header("Data source")
+data_option = st.sidebar.radio("Choose data source:", ("Upload CSV", "Use repository CSV", "YFinance"))
+
+uploaded_file = None
+repo_csv_choice = None
+ticker_input = None
+
+if data_option == "Upload CSV":
+    uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
+elif data_option == "Use repository CSV":
+    # list csv files in repo root
+    csv_files = [f for f in os.listdir(BASE_DIR) if f.lower().endswith(".csv")]
+    repo_csv_choice = st.sidebar.selectbox("Repository CSV", ["-- choose --"] + csv_files)
+else:
+    ticker_input = st.sidebar.text_input("Ticker (e.g. ADANIPORTS.NS)", value="ADANIPORTS.NS")
+
+# Additional controls
+st.sidebar.markdown("---")
+st.sidebar.header("Chart / Model Settings")
+chart_choice = st.sidebar.selectbox("Groww chart type", ["Line","Area","Candlestick"])
+plotly_export_msg = ""
+if PLOTLY_AVAILABLE:
+    st.sidebar.write("Plotly detected")
+else:
+    st.sidebar.write("Plotly not available — using matplotlib fallbacks")
+
+# Read data based on selection
+df = None
+if data_option == "Upload CSV":
+    if not uploaded_file:
+        st.info("Upload a CSV (or choose repo CSV or YFinance) to proceed.")
+        st.stop()
+    try:
+        df = pd.read_csv(uploaded_file)
+    except Exception as e:
+        st.error(f"Failed to read uploaded CSV: {e}")
+        st.stop()
+elif data_option == "Use repository CSV":
+    if repo_csv_choice in (None, "-- choose --"):
+        st.info("Select a repository CSV file.")
+        st.stop()
+    try:
+        df = pd.read_csv(os.path.join(BASE_DIR, repo_csv_choice))
+    except Exception as e:
+        st.error(f"Failed to read repository CSV: {e}")
+        st.stop()
+else:  # YFinance
+    try:
+        import yfinance as yf
+        if not ticker_input:
+            st.info("Enter a ticker to load from yfinance.")
+            st.stop()
+        df = yf.download(ticker_input, progress=False)
+        if df.empty:
+            st.error("YFinance returned no data for that ticker.")
+            st.stop()
+        # yfinance returns DatetimeIndex; convert to DataFrame with index as Date
+        df = df.reset_index()
+    except Exception as e:
+        st.error(f"YFinance error: {e}")
+        st.stop()
+
+# Normalize column names
 df.columns = [c.strip() for c in df.columns]
 
-# detect date and price
+# Detect date and price columns
+def detect_date_column(df):
+    for c in df.columns:
+        if "date" in c.lower() or "time" in c.lower():
+            return c
+    # if index looks like dates (e.g., downloaded from yfinance)
+    try:
+        pd.to_datetime(df.iloc[:,0])
+        return df.columns[0]
+    except Exception:
+        return None
+
+def detect_price_column(df):
+    candidates = ["Close","Adj Close","close","Adj Close**","Close*","Close Price","Price"]
+    for c in candidates:
+        if c in df.columns:
+            return c
+    numeric = df.select_dtypes(include=[np.number]).columns
+    return numeric[-1] if len(numeric)>0 else None
+
+date_col = detect_date_column(df)
+if date_col is None:
+    st.error("Could not detect a date/time column in the CSV.")
+    st.stop()
+
+# ensure date col is datetime
 try:
-    date_col = detect_date_column(df)
     df[date_col] = pd.to_datetime(df[date_col])
-    df.set_index(date_col, inplace=True)
-except Exception as e:
-    st.error(f"Date column error: {e}")
+except Exception:
+    st.error(f"Failed to parse date column '{date_col}'.")
     st.stop()
 
-try:
-    price_col = detect_price_column(df)
-except Exception as e:
-    st.error(f"Price column error: {e}")
+df = df.set_index(date_col).sort_index()
+
+price_col = detect_price_column(df)
+if price_col is None:
+    st.error("Could not find a price/numeric column in the CSV.")
     st.stop()
 
-# Data preview
-with st.expander("📊 Data Preview", expanded=True):
-    st.dataframe(df.tail())
-    fig_preview, ax_preview = plt.subplots(figsize=(10,3))
-    df[price_col].plot(ax=ax_preview)
-    ax_preview.set_title("Price Series")
-    st.pyplot(fig_preview)
-    plt.close(fig_preview)
+# Quick preview
+with st.expander("Data preview", expanded=True):
+    st.dataframe(df.tail(5))
+    fig_p, axp = plt.subplots(figsize=(10,3))
+    df[price_col].plot(ax=axp)
+    axp.set_title("Price series")
+    st.pyplot(fig_p)
+    plt.close(fig_p)
 
-# Groww charts selector and display (placed before model runs so user can inspect data)
+# Show Groww chart
 st.markdown("---")
-st.subheader("📊 Groww-Style Interactive Charts")
-
-chart_type = st.selectbox("Choose chart type", ["Line", "Area", "Candlestick"])
-groww_fig = groww_charts_figure(df, price_col, chart_type)
-
-# show interactive plotly if available, else show png fallback
+st.subheader("📊 Groww-style Chart")
+groww_fig = groww_chart(df, price_col, chart_choice)
 if PLOTLY_AVAILABLE and groww_fig is not None:
     st.plotly_chart(groww_fig, use_container_width=True)
-    # plot download (only if plotly->kaleido works)
+    # attempt to enable png export if kaleido present
+    if PLOTLY_AVAILABLE:
+        try:
+            _ = go.Figure().to_image(format="png")
+            KALeIDO_AVAILABLE = True
+        except Exception:
+            KALeIDO_AVAILABLE = False
     if KALeIDO_AVAILABLE:
         try:
-            png_bytes = groww_fig.to_image(format="png")
-            st.download_button("Download Chart (PNG)", png_bytes, file_name=f"groww_{chart_type.lower()}.png", mime="image/png")
+            png = groww_fig.to_image(format="png")
+            st.download_button("Download Chart (PNG)", png, file_name=f"groww_{chart_choice.lower()}.png", mime="image/png")
         except Exception:
-            st.info("Chart PNG export not available (kaleido missing). You can still interact with the chart.")
-    else:
-        st.info("Plotly is available but image export is not (kaleido missing). Interactive chart shown.")
+            st.info("Kaleido not available for PNG export. Interactive chart still works.")
 elif groww_fig is not None:
     # matplotlib buffer returned
     st.image(groww_fig)
-    st.download_button("Download Chart (PNG)", groww_fig.getvalue(), file_name=f"groww_{chart_type.lower()}.png", mime="image/png")
+    st.download_button("Download Chart (PNG)", groww_fig.getvalue(), file_name=f"groww_{chart_choice.lower()}.png", mime="image/png")
 else:
-    st.warning("Selected chart type requires columns not present in CSV (candlestick needs Open,High,Low,Close).")
+    st.warning("Selected chart not available (candlestick needs O/H/L/C columns).")
 
-# Prepare timeseries for modeling
-series = df[price_col].copy()
-series.name = price_col
+# Prepare series for modeling
+try:
+    series = df[price_col].asfreq("D")  # resample/align to daily if needed
+    series = series.fillna(method="ffill").fillna(method="bfill")
+except Exception as e:
+    st.error(f"Failed to prepare series: {e}")
+    st.stop()
 
-# convert to daily series and split
-series_ts = prepare_series(df, col=price_col, freq="D")
-train, test = train_test_split_series(series_ts, test_size=0.2)
+# Train/test split
+def train_test_split_series(s, test_size=0.2):
+    n = len(s)
+    split = int(n*(1-test_size))
+    train = s.iloc[:split]
+    test = s.iloc[split:]
+    return train, test
 
-# Sidebar: models and params
-st.sidebar.header("Models & Parameters")
-models = st.sidebar.multiselect("Choose models", ["ARIMA","SARIMA","Prophet","LSTM"],
-                                default=["ARIMA","SARIMA","Prophet","LSTM"])
+train_series, test_series = train_test_split_series(series, test_size=0.2)
 
-def parse_tuple_input(s, length=3, default=(1,1,1)):
+# Sidebar: model params
+st.sidebar.markdown("---")
+st.sidebar.header("Model parameters")
+models_selected = st.sidebar.multiselect("Select models", ["ARIMA","SARIMA","Prophet","LSTM"], default=["ARIMA","SARIMA","Prophet","LSTM"])
+arima_text = st.sidebar.text_input("ARIMA p,d,q", "5,1,0")
+sarima_text = st.sidebar.text_input("SARIMA p,d,q", "1,1,1")
+seasonal_text = st.sidebar.text_input("Seasonal P,D,Q,s", "1,1,1,12")
+lstm_seq = st.sidebar.number_input("LSTM seq len", 10, 200, 60)
+lstm_epochs = st.sidebar.number_input("LSTM epochs", 1, 50, 5)
+lstm_batch = st.sidebar.number_input("LSTM batch", 1, 256, 32)
+run_models_btn = st.sidebar.button("Run models 🚀")
+
+def parse_tuple(s, length=3, default=(1,1,1)):
     try:
         parts = [int(x.strip()) for x in s.split(",")]
-        return tuple(parts[:length]) if len(parts)>=length else tuple((parts + list(default))[:length])
+        if len(parts) >= length:
+            return tuple(parts[:length])
+        else:
+            return tuple((parts + list(default))[:length])
     except Exception:
         return default
 
-arima_order = parse_tuple_input(st.sidebar.text_input("ARIMA (p,d,q)", "5,1,0"), default=(5,1,0))
-sarima_order = parse_tuple_input(st.sidebar.text_input("SARIMA (p,d,q)", "1,1,1"), default=(1,1,1))
-seasonal_text = st.sidebar.text_input("Seasonal (P,D,Q,s)", "1,1,1,12")
+arima_order = parse_tuple(arima_text, 3, (5,1,0))
+sarima_order = parse_tuple(sarima_text, 3, (1,1,1))
 try:
-    seasonal_order = tuple([int(x.strip()) for x in seasonal_text.split(",")][:4])
+    seasonal_order = tuple(int(x.strip()) for x in seasonal_text.split(",")[:4])
     if len(seasonal_order) < 4:
         seasonal_order = (1,1,1,12)
 except Exception:
     seasonal_order = (1,1,1,12)
 
-lstm_seq = st.sidebar.number_input("LSTM seq len", 10, 200, 60)
-lstm_epochs = st.sidebar.number_input("LSTM epochs", 1, 50, 5)
-lstm_batch = st.sidebar.number_input("LSTM batch", 1, 256, 32)
-
-run = st.sidebar.button("Run Models")
-
+# Containers for outputs
 combined_predictions = {}
 model_scores = {}
-
 col1, col2 = st.columns(2)
 
-# Run models
-if run:
+# Run models when user clicks
+if run_models_btn:
     # ARIMA
-    if "ARIMA" in models:
+    if "ARIMA" in models_selected and train_arima and forecast_arima:
         with st.spinner("Training ARIMA..."):
             try:
-                arima_res = train_arima(train.squeeze(), order=arima_order)
-                arima_vals = forecast_arima(arima_res, steps=len(test))
-                arima_pred = pd.Series(arima_vals, index=test.index)
+                arima_res = train_arima(train_series, order=arima_order, save_path="models")
+                arima_vals = forecast_arima(arima_res, steps=len(test_series))
+                arima_pred = pd.Series(arima_vals, index=test_series.index)
                 combined_predictions["ARIMA"] = arima_pred
-                model_scores["ARIMA"] = {"RMSE": RMSE(test, arima_pred), "MSE": MSE(test, arima_pred), "MAPE": MAPE(test, arima_pred)}
-                buf = plot_series_buf(train, test, arima_pred, "ARIMA Forecast")
-                col1.subheader("ARIMA")
+                model_scores["ARIMA"] = {"RMSE": RMSE(test_series, arima_pred), "MSE": MSE(test_series, arima_pred), "MAPE": MAPE(test_series, arima_pred)}
+                buf = plot_series_buf(train_series, test_series, arima_pred, "ARIMA Forecast")
+                col1.subheader("ARIMA Forecast")
                 col1.image(buf)
-                # download CSV
-                csv_buf = arima_pred.reset_index().rename(columns={price_col:"forecast"}).to_csv(index=False).encode("utf-8")
-                col1.download_button("Download ARIMA CSV", csv_buf, file_name="arima_forecast.csv", mime="text/csv")
+                col1.download_button("Download ARIMA CSV", arima_pred.reset_index().rename(columns={price_col:"forecast"}).to_csv(index=False).encode("utf-8"), file_name="arima_forecast.csv", mime="text/csv")
             except Exception as e:
-                st.error(f"ARIMA error: {e}")
+                st.error(f"ARIMA failed: {e}\n{traceback.format_exc()}")
 
     # SARIMA
-    if "SARIMA" in models:
+    if "SARIMA" in models_selected and train_sarima and forecast_sarima:
         with st.spinner("Training SARIMA..."):
             try:
-                sarima_res = train_sarima(train.squeeze(), order=sarima_order, seasonal_order=seasonal_order)
-                sarima_vals = forecast_sarima(sarima_res, steps=len(test))
-                sarima_pred = pd.Series(sarima_vals, index=test.index)
+                sarima_res = train_sarima(train_series, order=sarima_order, seasonal_order=seasonal_order, save_path="models")
+                sarima_vals = forecast_sarima(sarima_res, steps=len(test_series))
+                sarima_pred = pd.Series(sarima_vals, index=test_series.index)
                 combined_predictions["SARIMA"] = sarima_pred
-                model_scores["SARIMA"] = {"RMSE": RMSE(test, sarima_pred), "MSE": MSE(test, sarima_pred), "MAPE": MAPE(test, sarima_pred)}
-                buf = plot_series_buf(train, test, sarima_pred, "SARIMA Forecast")
-                col1.subheader("SARIMA")
+                model_scores["SARIMA"] = {"RMSE": RMSE(test_series, sarima_pred), "MSE": MSE(test_series, sarima_pred), "MAPE": MAPE(test_series, sarima_pred)}
+                buf = plot_series_buf(train_series, test_series, sarima_pred, "SARIMA Forecast")
+                col1.subheader("SARIMA Forecast")
                 col1.image(buf)
-                csv_buf = sarima_pred.reset_index().rename(columns={price_col:"forecast"}).to_csv(index=False).encode("utf-8")
-                col1.download_button("Download SARIMA CSV", csv_buf, file_name="sarima_forecast.csv", mime="text/csv")
+                col1.download_button("Download SARIMA CSV", sarima_pred.reset_index().rename(columns={price_col:"forecast"}).to_csv(index=False).encode("utf-8"), file_name="sarima_forecast.csv", mime="text/csv")
             except Exception as e:
-                st.error(f"SARIMA error: {e}")
+                st.error(f"SARIMA failed: {e}\n{traceback.format_exc()}")
 
     # Prophet
-    if "Prophet" in models:
+    if "Prophet" in models_selected and train_prophet and forecast_prophet:
         with st.spinner("Training Prophet..."):
             try:
-                prophet_input = train.squeeze()
-                prophet_model = train_prophet(prophet_input)
-                prophet_pred_series = forecast_prophet(prophet_model, periods=len(test))
-                prophet_pred_series = prophet_pred_series.reindex(test.index)
-                prophet_pred = pd.Series(prophet_pred_series.values, index=test.index)
+                prophet_model = train_prophet(train_series, save_path="models")
+                prophet_series = forecast_prophet(prophet_model, periods=len(test_series))
+                prophet_series = prophet_series.reindex(test_series.index)
+                prophet_pred = pd.Series(prophet_series.values, index=test_series.index)
                 combined_predictions["Prophet"] = prophet_pred
-                model_scores["Prophet"] = {"RMSE": RMSE(test, prophet_pred), "MSE": MSE(test, prophet_pred), "MAPE": MAPE(test, prophet_pred)}
-                buf = plot_series_buf(train, test, prophet_pred, "Prophet Forecast")
-                col2.subheader("Prophet")
+                model_scores["Prophet"] = {"RMSE": RMSE(test_series, prophet_pred), "MSE": MSE(test_series, prophet_pred), "MAPE": MAPE(test_series, prophet_pred)}
+                buf = plot_series_buf(train_series, test_series, prophet_pred, "Prophet Forecast")
+                col2.subheader("Prophet Forecast")
                 col2.image(buf)
-                csv_buf = prophet_pred.reset_index().rename(columns={price_col:"forecast"}).to_csv(index=False).encode("utf-8")
-                col2.download_button("Download Prophet CSV", csv_buf, file_name="prophet_forecast.csv", mime="text/csv")
+                col2.download_button("Download Prophet CSV", prophet_pred.reset_index().rename(columns={price_col:"forecast"}).to_csv(index=False).encode("utf-8"), file_name="prophet_forecast.csv", mime="text/csv")
             except Exception as e:
-                st.error(f"Prophet error: {e}")
+                st.error(f"Prophet failed: {e}\n{traceback.format_exc()}")
 
     # LSTM
-    if "LSTM" in models:
+    if "LSTM" in models_selected and train_lstm and forecast_lstm:
         with st.spinner("Training LSTM..."):
             try:
                 scaler = MinMaxScaler()
                 scaled = scaler.fit_transform(series.values.reshape(-1,1))
-                split = int(len(scaled)*0.8)
-                train_scaled = scaled[:split]
-                lstm_model = train_lstm(train_scaled, seq_len=int(lstm_seq), epochs=int(lstm_epochs), batch_size=int(lstm_batch))
-                lstm_vals = forecast_lstm(lstm_model, scaled, scaler, seq_len=int(lstm_seq), steps=len(test))
-                lstm_pred = pd.Series(lstm_vals, index=test.index)
+                split_idx = int(len(scaled)*0.8)
+                train_scaled = scaled[:split_idx]
+                lstm_model = train_lstm(train_scaled, seq_len=int(lstm_seq), epochs=int(lstm_epochs), batch_size=int(lstm_batch), save_path="models")
+                lstm_vals = forecast_lstm(lstm_model, scaled, scaler, seq_len=int(lstm_seq), steps=len(test_series))
+                lstm_pred = pd.Series(lstm_vals, index=test_series.index)
                 combined_predictions["LSTM"] = lstm_pred
-                model_scores["LSTM"] = {"RMSE": RMSE(test, lstm_pred), "MSE": MSE(test, lstm_pred), "MAPE": MAPE(test, lstm_pred)}
-                buf = plot_series_buf(train, test, lstm_pred, "LSTM Forecast")
-                col2.subheader("LSTM")
+                model_scores["LSTM"] = {"RMSE": RMSE(test_series, lstm_pred), "MSE": MSE(test_series, lstm_pred), "MAPE": MAPE(test_series, lstm_pred)}
+                buf = plot_series_buf(train_series, test_series, lstm_pred, "LSTM Forecast")
+                col2.subheader("LSTM Forecast")
                 col2.image(buf)
-                csv_buf = lstm_pred.reset_index().rename(columns={price_col:"forecast"}).to_csv(index=False).encode("utf-8")
-                col2.download_button("Download LSTM CSV", csv_buf, file_name="lstm_forecast.csv", mime="text/csv")
+                col2.download_button("Download LSTM CSV", lstm_pred.reset_index().rename(columns={price_col:"forecast"}).to_csv(index=False).encode("utf-8"), file_name="lstm_forecast.csv", mime="text/csv")
             except Exception as e:
-                st.error(f"LSTM error: {e}")
+                st.error(f"LSTM failed: {e}\n{traceback.format_exc()}")
 
-    # Combined chart + CSV download
+    # Combined chart + downloads
     if combined_predictions:
         st.markdown("---")
         st.subheader("📊 Combined Forecast Comparison")
-        combined_buf = plot_combined_chart_buf(train, test, combined_predictions)
+        combined_buf = plot_combined_chart_buf(train_series, test_series, combined_predictions)
         st.image(combined_buf)
         st.download_button("Download Combined Chart (PNG)", combined_buf.getvalue(), file_name="combined_chart.png", mime="image/png")
-
-        combined_df = pd.DataFrame(index=test.index)
+        # combined CSV
+        combined_df = pd.DataFrame(index=test_series.index)
         for name, s in combined_predictions.items():
             combined_df[name] = s.values
-        combined_df["Actual"] = test.values
-        combined_csv = combined_df.reset_index().rename(columns={"index":"Date"}).to_csv(index=False).encode("utf-8")
-        st.download_button("Download Combined Forecasts CSV", combined_csv, file_name="combined_forecasts.csv", mime="text/csv")
+        combined_df["Actual"] = test_series.values
+        st.download_button("Download Combined Forecasts CSV", combined_df.reset_index().rename(columns={"index":"Date"}).to_csv(index=False).encode("utf-8"), file_name="combined_forecasts.csv", mime="text/csv")
 
     # Metrics + ranking + radar + downloads
     if model_scores:
@@ -485,18 +538,16 @@ if run:
         metrics_df = metrics_df.sort_values("RMSE")
         metrics_df["Rank"] = range(1, len(metrics_df)+1)
         st.dataframe(metrics_df.style.background_gradient(cmap="Blues").format({
-            "RMSE": "{:.4f}",
-            "MSE": "{:.4f}",
-            "MAPE": "{:.2f}%"
+            "RMSE":"{:.4f}",
+            "MSE":"{:.4f}",
+            "MAPE":"{:.2f}%"
         }))
-        best = metrics_df.index[0]
-        st.success(f"🏆 Best Model: **{best}**")
-        metrics_csv = metrics_df.reset_index().rename(columns={"index":"Model"}).to_csv(index=False).encode("utf-8")
-        st.download_button("Download Metrics CSV", metrics_csv, file_name="model_metrics.csv", mime="text/csv")
-
+        best_model = metrics_df.index[0]
+        st.success(f"🏆 Best Model: **{best_model}**")
+        st.download_button("Download Metrics CSV", metrics_df.reset_index().rename(columns={"index":"Model"}).to_csv(index=False).encode("utf-8"), file_name="metrics.csv", mime="text/csv")
         radar_buf = create_radar_chart_buf(metrics_df)
         st.subheader("📡 Radar Chart (Inverted Metrics)")
         st.image(radar_buf)
         st.download_button("Download Radar Chart (PNG)", radar_buf.getvalue(), file_name="radar_chart.png", mime="image/png")
 
-# End of app.py
+# end
