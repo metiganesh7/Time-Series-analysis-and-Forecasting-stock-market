@@ -160,11 +160,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 ])
 
 # =========================================================
-# ✅ TAB 1 — FULL CSV FORECASTING (RESTORED ✅)
-# =========================================================
-
-# =========================================================
-# ✅ TAB 1 — BULLETPROOF CSV FORECASTING (FINAL FIX)
+# ✅ TAB 1 — ADVANCED CSV FORECASTING + ACCURACY + DOWNLOAD
 # =========================================================
 
 with tab1:
@@ -189,7 +185,7 @@ with tab1:
             break
 
     if date_col is None:
-        st.error("❌ No Date column detected. Your CSV must contain a DATE column.")
+        st.error("❌ No Date column detected in your CSV.")
         st.stop()
 
     # ---- Detect Price Column ----
@@ -202,38 +198,40 @@ with tab1:
     if price_col is None:
         nums = df.select_dtypes(include="number").columns
         if len(nums) == 0:
-            st.error("❌ No numeric column found for price.")
+            st.error("❌ No numeric price column found.")
             st.stop()
         price_col = nums[-1]
 
-    st.success(f"✅ Using Columns → Date: `{date_col}` | Price: `{price_col}`")
+    st.success(f"✅ Using → Date: `{date_col}` | Price: `{price_col}`")
 
-    # ---- Prepare Series ----
     df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
     df = df.dropna(subset=[date_col, price_col])
     df.set_index(date_col, inplace=True)
 
     series = df[price_col].astype(float)
 
-    st.line_chart(series.tail(200))
+    st.line_chart(series.tail(300))
 
     split = int(len(series) * 0.8)
     train = series.iloc[:split]
     test = series.iloc[split:]
 
+    # ============================
+    # ✅ FORECAST BUTTON
+    # ============================
     if st.button("🚀 Run Forecast Models"):
 
         preds = {}
         errors = {}
+        metrics = {}
 
         # ============================
-        # ✅ ARIMA (GUARANTEED TO WORK)
+        # ✅ ARIMA
         # ============================
         try:
             arima = train_arima(train, order=(5,1,0))
             pred = forecast_arima(arima, len(test))
             preds["ARIMA"] = pd.Series(pred, index=test.index)
-            st.success("✅ ARIMA Successful")
         except Exception as e:
             errors["ARIMA"] = str(e)
 
@@ -244,33 +242,30 @@ with tab1:
             sarima = train_sarima(train)
             pred = forecast_sarima(sarima, len(test))
             preds["SARIMA"] = pd.Series(pred, index=test.index)
-            st.success("✅ SARIMA Successful")
         except Exception as e:
             errors["SARIMA"] = str(e)
 
         # ============================
-        # ✅ PROPHET (OPTIONAL)
+        # ✅ PROPHET
         # ============================
         try:
             prophet = train_prophet(train)
             pvals = forecast_prophet(prophet, len(test))
             preds["Prophet"] = pd.Series(pvals.values, index=test.index)
-            st.success("✅ Prophet Successful")
         except Exception as e:
             errors["Prophet"] = str(e)
 
         # ============================
-        # ✅ LSTM (CLOUD SAFE VERSION)
+        # ✅ LSTM (Cloud Safe)
         # ============================
         try:
             scaler = MinMaxScaler()
             scaled = scaler.fit_transform(series.values.reshape(-1,1))
-
             train_scaled = scaled[:split]
 
             lstm_model = train_lstm(
                 train_scaled,
-                seq_len=30,      # reduced for cloud safety
+                seq_len=30,
                 epochs=3,
                 batch_size=16
             )
@@ -278,24 +273,93 @@ with tab1:
             lvals = forecast_lstm(lstm_model, scaled, scaler, 30, len(test))
             preds["LSTM"] = pd.Series(lvals, index=test.index)
 
-            st.success("✅ LSTM Successful")
-
         except Exception as e:
             errors["LSTM"] = str(e)
 
         # ============================
-        # ✅ SHOW RESULTS
+        # ✅ INDIVIDUAL FORECAST PLOTS
         # ============================
         if len(preds) == 0:
-            st.error("❌ ALL MODELS FAILED")
-            st.error(errors)
-        else:
-            st.subheader("📊 Forecast Results")
-            for name, p in preds.items():
-                st.image(plot_series(train, test, p, name))
+            st.error("❌ All models failed.")
+            st.code(errors)
+            st.stop()
+
+        st.subheader("📊 Individual Model Forecasts")
+
+        for name, p in preds.items():
+            img = plot_series(train, test, p, name)
+            st.image(img)
+
+            st.download_button(
+                f"⬇ Download {name} Forecast",
+                img.getvalue(),
+                f"{name}_forecast.png",
+                "image/png"
+            )
 
         # ============================
-        # ✅ SHOW MODEL ERRORS (IMPORTANT)
+        # ✅ MODEL ACCURACY TABLE
+        # ============================
+        st.subheader("📈 Model Accuracy (RMSE, MSE, Ranking)")
+
+        for name, p in preds.items():
+            rmse = np.sqrt(mean_squared_error(test, p))
+            mse = mean_squared_error(test, p)
+            mape = np.mean(np.abs((test - p) / test)) * 100
+
+            metrics[name] = {
+                "RMSE": rmse,
+                "MSE": mse,
+                "MAPE (%)": mape
+            }
+
+        metrics_df = pd.DataFrame(metrics).T
+        metrics_df["Rank"] = metrics_df["RMSE"].rank()
+
+        st.dataframe(metrics_df.style.background_gradient(cmap="Blues"))
+
+        csv_metrics = metrics_df.to_csv().encode("utf-8")
+        st.download_button(
+            "⬇ Download Model Accuracy CSV",
+            csv_metrics,
+            "model_accuracy.csv",
+            "text/csv"
+        )
+
+        best_model = metrics_df.sort_values("RMSE").index[0]
+        st.success(f"🏆 Best Performing Model: {best_model}")
+
+        # ============================
+        # ✅ COMBINED FORECAST CHART
+        # ============================
+        st.subheader("📊 Combined Forecast Chart")
+
+        fig, ax = plt.subplots(figsize=(12,5))
+        train.plot(ax=ax, label="Train")
+        test.plot(ax=ax, label="Test")
+
+        for name, p in preds.items():
+            p.plot(ax=ax, label=name)
+
+        ax.legend()
+        ax.set_title("Combined Forecast Comparison")
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png")
+        buf.seek(0)
+        plt.close()
+
+        st.image(buf)
+
+        st.download_button(
+            "⬇ Download Combined Forecast",
+            buf.getvalue(),
+            "combined_forecast.png",
+            "image/png"
+        )
+
+        # ============================
+        # ✅ SHOW MODEL ERRORS
         # ============================
         if len(errors) > 0:
             st.subheader("⚠ Model Errors")
