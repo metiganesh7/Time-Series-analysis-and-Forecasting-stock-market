@@ -1,7 +1,6 @@
 import sys
 import os
 import io
-import joblib
 import datetime as dt
 
 # ensure scripts folder is importable
@@ -10,284 +9,172 @@ SCRIPTS_DIR = os.path.join(BASE_DIR, "scripts")
 if SCRIPTS_DIR not in sys.path:
     sys.path.append(SCRIPTS_DIR)
 
-# project model utilities
-from scripts.utils import download_data, prepare_series, train_test_split_series
-
-# Models
-try:
-    from scripts.arima_model import train_arima, forecast_arima
-    HAVE_ARIMA = True
-except Exception:
-    HAVE_ARIMA = False
-
+# Import model modules
+from scripts.utils import prepare_series, train_test_split_series
+from scripts.arima_model import train_arima, forecast_arima
 from scripts.sarima_model import train_sarima, forecast_sarima
 from scripts.prophet_model import train_prophet, forecast_prophet
 from scripts.lstm_model import train_lstm, forecast_lstm
 
-# plotting & UI libs
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 
-# auto create folders
-os.makedirs("models", exist_ok=True)
-os.makedirs("plots", exist_ok=True)
 
-st.set_page_config(page_title="Time Series Forecasting Dashboard", layout="wide")
-
-# -------------------------
+# -------------------------------------------------
 # Helper Functions
-# -------------------------
-@st.cache_data(ttl=3600)
-def cached_download(ticker, start, end):
-    return download_data(ticker, start, end, "data")
+# -------------------------------------------------
 
 def detect_date_column(df):
-    candidates = ["Date", "date", "Datetime", "datetime", "Timestamp", "timestamp"]
     for col in df.columns:
-        if col in candidates or "date" in col.lower():
+        if "date" in col.lower() or col.lower() in ["timestamp", "datetime"]:
             return col
     return None
 
 def detect_price_column(df):
-    candidates = ["Close", "close", "CLOSE", "Adj Close", "Adj_Close", "Price", "price"]
+    candidates = ["Close", "close", "Price", "Adj Close"]
     for c in candidates:
         if c in df.columns:
             return c
     numeric_cols = df.select_dtypes(include="number").columns
-    return numeric_cols[-1] if len(numeric_cols) else None
+    return numeric_cols[-1]
 
-def ensure_series(obj):
-    if isinstance(obj, pd.DataFrame):
-        price_col = detect_price_column(obj)
-        return obj[price_col]
-    return obj
-
-def plot_to_image(fig):
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches='tight')
-    buf.seek(0)
-    return buf
-
-def plot_series_inline(train, test, preds, title):
-    fig, ax = plt.subplots(figsize=(10,4))
+def plot_series(train, test, preds, title):
+    fig, ax = plt.subplots(figsize=(10, 4))
     train.plot(ax=ax, label="Train")
     test.plot(ax=ax, label="Test")
     preds.plot(ax=ax, label="Forecast")
     ax.set_title(title)
     ax.legend()
-    buf = plot_to_image(fig)
+
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png", bbox_inches="tight")
+    buffer.seek(0)
     plt.close(fig)
-    return buf
-
-def save_plot_buf(buf, filename):
-    with open(filename, "wb") as f:
-        f.write(buf.getbuffer())
+    return buffer
 
 
-# -------------------------
-# SIDEBAR — DATA SOURCE
-# -------------------------
-st.sidebar.header("📁 Data Source")
+# -------------------------------------------------
+# Streamlit UI
+# -------------------------------------------------
 
-data_source = st.sidebar.radio(
-    "Choose data source:",
-    ["YFinance", "Upload CSV", "Enter CSV Path", "Repository CSV"]
-)
+st.set_page_config(page_title="Stock Forecasting Dashboard", layout="wide")
+st.title("📈 Time Series Forecasting Dashboard (Upload CSV Only)")
 
-df = None
+# Upload CSV
+st.sidebar.header("📁 Upload CSV File")
+uploaded = st.sidebar.file_uploader("Upload your dataset", type=["csv"])
 
-# CASE 1 — YFINANCE
-if data_source == "YFinance":
-    ticker = st.sidebar.text_input("Ticker", "ADANIPORTS.NS")
-    start = st.sidebar.date_input("Start date", dt.date(2015,1,1))
-    end = st.sidebar.date_input("End date", dt.date.today())
-
-    df = cached_download(ticker, start.isoformat(), end.isoformat())
-    st.success(f"Loaded YFinance dataset for {ticker}")
-
-# CASE 2 — UPLOAD CSV
-elif data_source == "Upload CSV":
-    uploaded = st.sidebar.file_uploader("Upload your CSV file", type=["csv"])
-    if uploaded:
-        df = pd.read_csv(uploaded)
-        st.success("Uploaded CSV loaded successfully.")
-    else:
-        st.info("Upload a CSV file to continue.")
-        st.stop()
-
-# CASE 3 — ENTER CSV PATH
-elif data_source == "Enter CSV Path":
-    path = st.sidebar.text_input("Full CSV path", "")
-    if path.strip():
-        try:
-            df = pd.read_csv(path)
-            st.success(f"Loaded dataset: {path}")
-        except Exception as e:
-            st.error(f"Could not load file: {e}")
-            st.stop()
-    else:
-        st.info("Enter a valid file path.")
-        st.stop()
-
-# CASE 4 — REPOSITORY CSV
-elif data_source == "Repository CSV":
-    repo_csv_files = [f for f in os.listdir(BASE_DIR) if f.endswith(".csv")]
-
-    if len(repo_csv_files) == 0:
-        st.error("No CSV files found in repository root!")
-        st.stop()
-
-    selected = st.sidebar.selectbox("Choose a CSV file:", repo_csv_files)
-
-    try:
-        df = pd.read_csv(os.path.join(BASE_DIR, selected))
-        st.success(f"Loaded dataset: {selected}")
-    except Exception as e:
-        st.error(f"Could not load {selected}: {e}")
-        st.stop()
-
-
-# -------------------------
-# STOP HERE IF df IS NONE
-# -------------------------
-if df is None:
-    st.error("No dataset loaded! Please select a data source.")
+if not uploaded:
+    st.warning("Please upload a CSV file to continue.")
     st.stop()
 
-
-# -------------------------
-# SAFE TO PROCESS df NOW
-# -------------------------
+# Load dataset
+df = pd.read_csv(uploaded)
 df.columns = [c.strip() for c in df.columns]
 
+# Detect columns
 date_col = detect_date_column(df)
-if date_col is None:
-    st.error("Could not detect a Date column in your dataset.")
+if not date_col:
+    st.error("No date column found. Please include a column named Date/Datetime.")
     st.stop()
 
 df[date_col] = pd.to_datetime(df[date_col])
 df.set_index(date_col, inplace=True)
 
 price_col = detect_price_column(df)
-if price_col is None:
-    st.error("Could not detect a Price column (Close / Price).")
-    st.stop()
-
 series = df[price_col]
 series.name = price_col
 
-
-# -------------------------
-# PREVIEW SECTION
-# -------------------------
-with st.expander("📊 Dataset Preview", expanded=True):
+# Show preview
+with st.expander("📊 Data Preview", expanded=True):
     st.dataframe(df.tail())
-
-    fig, ax = plt.subplots(figsize=(10,3))
+    fig, ax = plt.subplots(figsize=(10, 3))
     series.plot(ax=ax)
-    ax.set_title(f"Price Series — {price_col}")
+    ax.set_title("Price Series")
     st.pyplot(fig)
     plt.close(fig)
 
-
-# -------------------------
-# Prepare series
-# -------------------------
+# Prepare data
 series = prepare_series(df, col=price_col, freq="D")
 train, test = train_test_split_series(series, test_size=0.2)
 
+# -------------------------------------------------
+# Model Selection
+# -------------------------------------------------
 
-# -------------------------
-# MODEL SETTINGS
-# -------------------------
 st.sidebar.header("🧠 Models")
-
-model_options = st.sidebar.multiselect(
+models_to_run = st.sidebar.multiselect(
     "Select Models",
-    ["SARIMA", "ARIMA", "Prophet", "LSTM"],
-    default=["SARIMA", "Prophet", "LSTM"]
+    ["ARIMA", "SARIMA", "Prophet", "LSTM"],
+    default=["ARIMA", "SARIMA", "Prophet", "LSTM"]
 )
 
-run_btn = st.sidebar.button("Run Models")
-
-# Hyperparameters
 st.sidebar.markdown("---")
-sarima_order = tuple(map(int, st.sidebar.text_input("SARIMA (p,d,q)", "1,1,1").split(",")))
-sarima_seasonal = tuple(map(int, st.sidebar.text_input("Seasonal (P,D,Q,s)", "1,1,1,12").split(",")))
+
+# ARIMA settings
 arima_order = tuple(map(int, st.sidebar.text_input("ARIMA (p,d,q)", "5,1,0").split(",")))
 
+# SARIMA settings
+sarima_order = tuple(map(int, st.sidebar.text_input("SARIMA (p,d,q)", "1,1,1").split(",")))
+sarima_seasonal = tuple(map(int, st.sidebar.text_input("Seasonal (P,D,Q,s)", "1,1,1,12").split(",")))
+
+# LSTM settings
 lstm_seq = st.sidebar.number_input("LSTM Sequence Length", 10, 200, 60)
 lstm_epochs = st.sidebar.number_input("LSTM Epochs", 1, 50, 5)
 lstm_batch = st.sidebar.number_input("LSTM Batch Size", 1, 256, 32)
 
-col_left, col_right = st.columns(2)
+run_btn = st.sidebar.button("Run Models")
 
+col1, col2 = st.columns(2)
 
-# -------------------------
-# MODEL RUN FUNCTIONS
-# -------------------------
-def run_arima():
-    train_series = train if isinstance(train, pd.Series) else train.iloc[:,0]
-    model = train_arima(train_series, order=arima_order)
-    pred = forecast_arima(model, steps=len(test))
-    return pd.Series(pred, index=test.index)
+# -------------------------------------------------
+# Run Models
+# -------------------------------------------------
 
-def run_sarima():
-    model = train_sarima(train, order=sarima_order, seasonal_order=sarima_seasonal)
-    pred = forecast_sarima(model, steps=len(test))
-    return pd.Series(pred, index=test.index)
-
-def run_prophet_model():
-    model = train_prophet(train)
-    pred = forecast_prophet(model, periods=len(test))
-    return pd.Series(pred.values, index=test.index)
-
-def run_lstm_model():
-    scaler = MinMaxScaler()
-    scaled = scaler.fit_transform(series.values.reshape(-1,1))
-
-    split = int(len(scaled)*0.8)
-    train_s = scaled[:split]
-
-    model = train_lstm(train_s, seq_len=lstm_seq, epochs=lstm_epochs, batch_size=lstm_batch)
-    pred = forecast_lstm(model, scaled, scaler, seq_len=lstm_seq, steps=len(test))
-    return pd.Series(pred, index=test.index)
-
-
-# -------------------------
-# RUN SELECTED MODELS
-# -------------------------
 if run_btn:
-    if "ARIMA" in model_options:
-        if HAVE_ARIMA:
-            with st.spinner("Running ARIMA..."):
-                col_left.subheader("ARIMA Forecast")
-                pred = run_arima()
-                buf = plot_series_inline(train, test, pred, "ARIMA")
-                col_left.image(buf)
-        else:
-            st.error("ARIMA model not available.")
 
-    if "SARIMA" in model_options:
+    # ARIMA
+    if "ARIMA" in models_to_run:
+        with st.spinner("Running ARIMA..."):
+            arima_model = train_arima(train, order=arima_order)
+            arima_pred = pd.Series(forecast_arima(arima_model, len(test)), index=test.index)
+            buf = plot_series(train, test, arima_pred, "ARIMA Forecast")
+            col1.subheader("ARIMA Forecast")
+            col1.image(buf)
+
+    # SARIMA
+    if "SARIMA" in models_to_run:
         with st.spinner("Running SARIMA..."):
-            col_left.subheader("SARIMA Forecast")
-            pred = run_sarima()
-            buf = plot_series_inline(train, test, pred, "SARIMA")
-            col_left.image(buf)
+            sarima_model = train_sarima(train, order=sarima_order, seasonal_order=sarima_seasonal)
+            sarima_pred = pd.Series(forecast_sarima(sarima_model, len(test)), index=test.index)
+            buf = plot_series(train, test, sarima_pred, "SARIMA Forecast")
+            col1.subheader("SARIMA Forecast")
+            col1.image(buf)
 
-    if "Prophet" in model_options:
+    # Prophet
+    if "Prophet" in models_to_run:
         with st.spinner("Running Prophet..."):
-            col_right.subheader("Prophet Forecast")
-            pred = run_prophet_model()
-            buf = plot_series_inline(train, test, pred, "Prophet")
-            col_right.image(buf)
+            prophet_model = train_prophet(train)
+            prophet_pred = forecast_prophet(prophet_model, periods=len(test))
+            prophet_pred = pd.Series(prophet_pred.values, index=test.index)
+            buf = plot_series(train, test, prophet_pred, "Prophet Forecast")
+            col2.subheader("Prophet Forecast")
+            col2.image(buf)
 
-    if "LSTM" in model_options:
+    # LSTM
+    if "LSTM" in models_to_run:
         with st.spinner("Running LSTM..."):
-            col_right.subheader("LSTM Forecast")
-            pred = run_lstm_model()
-            buf = plot_series_inline(train, test, pred, "LSTM")
-            col_right.image(buf)
+            scaler = MinMaxScaler()
+            scaled = scaler.fit_transform(series.values.reshape(-1,1))
+            train_scaled = scaled[: int(len(scaled)*0.8) ]
+
+            lstm_model = train_lstm(train_scaled, seq_len=lstm_seq, epochs=lstm_epochs, batch_size=lstm_batch)
+            lstm_pred = forecast_lstm(lstm_model, scaled, scaler, seq_len=lstm_seq, steps=len(test))
+            lstm_pred = pd.Series(lstm_pred, index=test.index)
+
+            buf = plot_series(train, test, lstm_pred, "LSTM Forecast")
+            col2.subheader("LSTM Forecast")
+            col2.image(buf)
