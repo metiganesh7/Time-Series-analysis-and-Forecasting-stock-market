@@ -34,7 +34,6 @@ from sklearn.preprocessing import MinMaxScaler
 # auto create folders
 os.makedirs("models", exist_ok=True)
 os.makedirs("plots", exist_ok=True)
-os.makedirs("data", exist_ok=True)
 
 st.set_page_config(page_title="Time Series Forecasting Dashboard", layout="wide")
 
@@ -95,7 +94,7 @@ st.sidebar.header("📁 Data Source")
 
 data_source = st.sidebar.radio(
     "Choose data source:",
-    ["YFinance", "Upload CSV", "Enter CSV Path"]
+    ["YFinance", "Upload CSV", "Enter CSV Path", "Repository CSV"]
 )
 
 df = None
@@ -125,7 +124,7 @@ elif data_source == "Enter CSV Path":
     if path.strip():
         try:
             df = pd.read_csv(path)
-            st.success(f"Loaded dataset from: {path}")
+            st.success(f"Loaded dataset: {path}")
         except Exception as e:
             st.error(f"Could not load file: {e}")
             st.stop()
@@ -133,12 +132,29 @@ elif data_source == "Enter CSV Path":
         st.info("Enter a valid file path.")
         st.stop()
 
+# CASE 4 — REPOSITORY CSV
+elif data_source == "Repository CSV":
+    repo_csv_files = [f for f in os.listdir(BASE_DIR) if f.endswith(".csv")]
+
+    if len(repo_csv_files) == 0:
+        st.error("No CSV files found in repository root!")
+        st.stop()
+
+    selected = st.sidebar.selectbox("Choose a CSV file:", repo_csv_files)
+
+    try:
+        df = pd.read_csv(os.path.join(BASE_DIR, selected))
+        st.success(f"Loaded dataset: {selected}")
+    except Exception as e:
+        st.error(f"Could not load {selected}: {e}")
+        st.stop()
+
 
 # -------------------------
-# STOP HERE IF df IS NONE (THE FIX)
+# STOP HERE IF df IS NONE
 # -------------------------
 if df is None:
-    st.error("No dataset loaded! Please choose or upload a dataset.")
+    st.error("No dataset loaded! Please select a data source.")
     st.stop()
 
 
@@ -157,7 +173,7 @@ df.set_index(date_col, inplace=True)
 
 price_col = detect_price_column(df)
 if price_col is None:
-    st.error("Could not detect a Price column (Close / Price) in your dataset.")
+    st.error("Could not detect a Price column (Close / Price).")
     st.stop()
 
 series = df[price_col]
@@ -185,7 +201,7 @@ train, test = train_test_split_series(series, test_size=0.2)
 
 
 # -------------------------
-# MODELS
+# MODEL SETTINGS
 # -------------------------
 st.sidebar.header("🧠 Models")
 
@@ -197,9 +213,10 @@ model_options = st.sidebar.multiselect(
 
 run_btn = st.sidebar.button("Run Models")
 
+# Hyperparameters
+st.sidebar.markdown("---")
 sarima_order = tuple(map(int, st.sidebar.text_input("SARIMA (p,d,q)", "1,1,1").split(",")))
 sarima_seasonal = tuple(map(int, st.sidebar.text_input("Seasonal (P,D,Q,s)", "1,1,1,12").split(",")))
-
 arima_order = tuple(map(int, st.sidebar.text_input("ARIMA (p,d,q)", "5,1,0").split(",")))
 
 lstm_seq = st.sidebar.number_input("LSTM Sequence Length", 10, 200, 60)
@@ -210,7 +227,7 @@ col_left, col_right = st.columns(2)
 
 
 # -------------------------
-# RUN MODEL FUNCTIONS
+# MODEL RUN FUNCTIONS
 # -------------------------
 def run_arima():
     train_series = train if isinstance(train, pd.Series) else train.iloc[:,0]
