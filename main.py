@@ -121,36 +121,59 @@ def calculate_target_stop(price, signal, target_pct=2, stop_pct=1):
         target, stop = None, None
     return target, stop
 
+# ✅ FIXED POSITION SIZING
 def calculate_position_size(capital, entry_price, stop_price, risk_percent=1):
     risk_amount = capital * (risk_percent / 100)
     per_share_risk = abs(entry_price - stop_price)
-    if per_share_risk == 0:
+
+    if per_share_risk < 0.01:
         return 0, 0, 0
+
     quantity = int(risk_amount / per_share_risk)
+    max_affordable_qty = int(capital / entry_price)
+    quantity = min(quantity, max_affordable_qty)
+
     position_value = quantity * entry_price
     return quantity, position_value, risk_amount
 
-def backtest_strategy(series):
-    capital = 100000
+# ✅ FIXED REALISTIC BACKTEST
+def backtest_strategy(series, capital=100000, risk_pct=1):
+    balance = capital
+    equity_curve = []
     position = 0
-    equity = []
+    entry_price = 0
+
     for i in range(1, len(series)):
-        signal = "BUY" if series.iloc[i] > series.iloc[i-1] else "SELL"
-        if signal == "BUY" and capital > 0:
-            position = capital / series.iloc[i]
-            capital = 0
-        elif signal == "SELL" and position > 0:
-            capital = position * series.iloc[i]
+        price_prev = series.iloc[i-1]
+        price_now = series.iloc[i]
+
+        if position == 0 and price_now > price_prev:
+            risk_amount = balance * (risk_pct / 100)
+            stop = price_now * 0.99
+            qty = int(risk_amount / abs(price_now - stop))
+
+            if qty > 0:
+                position = qty
+                entry_price = price_now
+                balance -= qty * price_now
+
+        elif position > 0 and price_now < price_prev:
+            balance += position * price_now
             position = 0
-        equity.append(capital + position * series.iloc[i])
-    equity = pd.Series(equity, index=series.index[1:])
-    total_return = (equity.iloc[-1] / 100000 - 1) * 100
-    win_rate = (equity.pct_change().fillna(0) > 0).mean() * 100
-    drawdown = (equity / equity.cummax() - 1).min() * 100
-    return equity, total_return, win_rate, drawdown
+
+        total_equity = balance + position * price_now
+        equity_curve.append(total_equity)
+
+    equity_curve = pd.Series(equity_curve)
+
+    total_return = (equity_curve.iloc[-1] / capital - 1) * 100
+    win_rate = (equity_curve.pct_change().fillna(0) > 0).mean() * 100
+    drawdown = (equity_curve / equity_curve.cummax() - 1).min() * 100
+
+    return equity_curve, total_return, win_rate, drawdown
 
 # =========================
-# ✅ SIDEBAR CONTROL PANEL
+# ✅ SIDEBAR
 # =========================
 with st.sidebar:
     st.markdown("## ⚙ Trading Control Panel")
@@ -165,12 +188,21 @@ if not file:
     st.stop()
 
 # =========================
-# ✅ LOAD DATA
+# ✅ LOAD DATA (FIXED PRICE COLUMN)
 # =========================
 df = pd.read_csv(file)
 df.columns = [c.strip() for c in df.columns]
+
 date_col = [c for c in df.columns if "date" in c.lower() or "time" in c.lower()][0]
-price_col = df.select_dtypes(include="number").columns[-1]
+
+possible_price_cols = ["close", "adj close", "price", "last"]
+price_col = None
+for col in df.columns:
+    if col.lower() in possible_price_cols:
+        price_col = col
+        break
+if price_col is None:
+    price_col = df.select_dtypes(include="number").columns[0]
 
 df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
 df = df.dropna(subset=[date_col, price_col])
@@ -214,96 +246,27 @@ if st.button("🚀 Run AI Models"):
         index=future_index
     )
 
-    # =========================
-    # ✅ INDIVIDUAL MODEL CHARTS
-    # =========================
-    st.subheader("🎯 Individual Model Forecasts")
-    model_colors = {"ARIMA":"#22c55e","SARIMA":"#06b6d4","Prophet":"#a78bfa","LSTM":"#f97316"}
-    cols = st.columns(2)
-
-    i = 0
-    for model_name, forecast in preds.items():
-        with cols[i % 2]:
-            st.markdown("<div class='model-card'>", unsafe_allow_html=True)
-            st.markdown(f"<div class='model-title'>{model_name} Forecast</div>", unsafe_allow_html=True)
-
-            fig, ax = plt.subplots(figsize=(7,4))
-            series.tail(200).plot(ax=ax, label="Actual", color="white")
-            forecast.plot(ax=ax, label=model_name, color=model_colors[model_name])
-            ax.legend()
-
-            buf = io.BytesIO()
-            fig.savefig(buf, format="png")
-            buf.seek(0)
-            plt.close()
-
-            st.image(buf)
-            st.download_button(
-                f"⬇ Download {model_name} Forecast",
-                buf.getvalue(),
-                f"{model_name.lower()}_forecast.png",
-                "image/png",
-                key=model_name
-            )
-            st.markdown("</div>", unsafe_allow_html=True)
-        i += 1
-
-    # =========================
-    # ✅ COMBINED COMPARISON
-    # =========================
-    st.subheader("📊 Combined Forecast Comparison")
-
-    fig, ax = plt.subplots(figsize=(12,5))
-    series.tail(200).plot(ax=ax, label="Actual")
-    for name, p in preds.items():
-        p.plot(ax=ax, label=name)
-    ax.legend()
-    st.pyplot(fig)
-
-    # =========================
-    # ✅ MODEL ACCURACY
-    # =========================
-    for name, p in preds.items():
-        align = min(len(test), len(p))
-        rmse = np.sqrt(mean_squared_error(test.values[:align], p.values[:align]))
-        mse = mean_squared_error(test.values[:align], p.values[:align])
-        mape = np.mean(np.abs((test.values[:align] - p.values[:align]) / test.values[:align])) * 100
-        metrics[name] = {"RMSE": rmse, "MSE": mse, "MAPE (%)": mape}
-
-    metrics_df = pd.DataFrame(metrics).T
-    metrics_df["Rank"] = metrics_df["RMSE"].rank()
-    st.subheader("📈 Model Accuracy")
-    st.dataframe(metrics_df)
-
-    # =========================
-    # ✅ TRADING SIGNAL + RISK MANAGEMENT
-    # =========================
+    # ✅ TRADING SIGNAL + POSITION SIZING
     last_price = series.iloc[-1]
     future_price = preds["ARIMA"].iloc[-1]
 
     signal, strength = generate_signal(last_price, future_price)
     target, stop = calculate_target_stop(last_price, signal)
 
-    st.subheader("📢 AI Trade Signal")
+    qty, pos_value, risk_amt = calculate_position_size(capital, last_price, stop, risk_percent)
+
+    st.subheader("📢 Trade Signal")
     st.metric("Signal", signal)
     st.metric("Expected Move %", f"{strength:.2f}%")
 
-    if target:
-        qty, pos_value, risk_amt = calculate_position_size(
-            capital, last_price, stop, risk_percent
-        )
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Entry", f"{last_price:.2f}")
+    c2.metric("Target", f"{target:.2f}")
+    c3.metric("Stop", f"{stop:.2f}")
+    c4.metric("Quantity", qty)
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Entry", f"{last_price:.2f}")
-        c2.metric("Target", f"{target:.2f}")
-        c3.metric("Stop", f"{stop:.2f}")
-        c4.metric("Quantity", qty)
-
-    # =========================
-    # ✅ BACKTESTING
-    # =========================
+    # ✅ BACKTEST
     st.subheader("📊 Strategy Backtesting")
-
     equity, total_return, win_rate, drawdown = backtest_strategy(test)
 
     col1, col2, col3 = st.columns(3)
