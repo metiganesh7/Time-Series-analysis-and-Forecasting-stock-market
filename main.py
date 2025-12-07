@@ -22,13 +22,35 @@ from scripts.prophet_model import train_prophet, forecast_prophet
 from scripts.lstm_model import train_lstm, forecast_lstm
 
 # =========================
-# ✅ UI + STYLE
+# ✅ PAGE CONFIG
 # =========================
-st.set_page_config(page_title="Stock Forecasting Pro", layout="wide")
+st.set_page_config(page_title="AI Stock Forecasting Pro", layout="wide")
 
+# =========================
+# ✅ PREMIUM UI THEME
+# =========================
 st.markdown("""
 <style>
-body { background-color: #020617; color: white; }
+.stApp {
+    background: radial-gradient(circle at top left, #020617, #02030f);
+    color: #e5e7eb;
+}
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #020617, #02030f);
+    border-right: 1px solid rgba(255,255,255,0.06);
+}
+.block-container {
+    padding: 2rem 2.5rem;
+}
+.glass-card {
+    background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
+    backdrop-filter: blur(12px);
+    border-radius: 18px;
+    padding: 20px;
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 0 40px rgba(56,189,248,0.12);
+    margin-bottom: 20px;
+}
 .model-card {
     background: linear-gradient(135deg, #0f172a, #020617);
     border-radius: 18px;
@@ -37,18 +59,47 @@ body { background-color: #020617; color: white; }
     box-shadow: 0 0 20px rgba(0,255,255,0.15);
 }
 .model-title {
-    font-size: 22px;
+    font-size: 20px;
     font-weight: bold;
     color: #38bdf8;
     margin-bottom: 10px;
 }
+h1, h2, h3 {
+    background: linear-gradient(90deg, #38bdf8, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-weight: 900;
+}
+.stButton button {
+    background: linear-gradient(135deg,#2563eb,#7c3aed) !important;
+    color: white !important;
+    font-weight: bold;
+    border-radius: 14px;
+    padding: 10px 24px;
+    border: none;
+    box-shadow: 0 0 15px rgba(124,58,237,0.4);
+}
+img {
+    border-radius: 16px;
+    box-shadow: 0 0 40px rgba(56,189,248,0.18);
+}
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 Professional Stock Forecasting & Trading System")
+# =========================
+# ✅ HEADER
+# =========================
+st.markdown("""
+<div class='glass-card'>
+    <h1>📊 AI Stock Forecasting & Trading Dashboard</h1>
+    <p style='color:#9ca3af'>
+        Forecasting • Signal Generation • Risk Management • Backtesting • Position Sizing
+    </p>
+</div>
+""", unsafe_allow_html=True)
 
 # =========================
-# ✅ SIGNAL + RISK SYSTEM
+# ✅ HELPER FUNCTIONS
 # =========================
 def generate_signal(last_price, forecast_price):
     change_pct = ((forecast_price - last_price) / last_price) * 100
@@ -99,17 +150,25 @@ def backtest_strategy(series):
     return equity, total_return, win_rate, drawdown
 
 # =========================
-# ✅ CSV UPLOAD
+# ✅ SIDEBAR CONTROL PANEL
 # =========================
-file = st.file_uploader("📂 Upload Stock CSV (Daily or Intraday)", type=["csv"])
+with st.sidebar:
+    st.markdown("## ⚙ Trading Control Panel")
+    file = st.file_uploader("📂 Upload Market CSV", type=["csv"])
+    timeframe = st.selectbox("⏱ Timeframe", ["Original", "1 Min", "5 Min", "15 Min", "30 Min"])
+    horizon = st.selectbox("📅 Forecast Horizon", [7, 15, 30, 60])
+    capital = st.number_input("💰 Trading Capital", 1000, 10_000_000, 100000, step=1000)
+    risk_percent = st.slider("⚠ Risk % per Trade", 0.5, 5.0, 1.0, step=0.5)
 
 if not file:
-    st.info("Upload a CSV to continue.")
+    st.info("Upload a CSV file to begin.")
     st.stop()
 
+# =========================
+# ✅ LOAD DATA
+# =========================
 df = pd.read_csv(file)
 df.columns = [c.strip() for c in df.columns]
-
 date_col = [c for c in df.columns if "date" in c.lower() or "time" in c.lower()][0]
 price_col = df.select_dtypes(include="number").columns[-1]
 
@@ -117,88 +176,52 @@ df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
 df = df.dropna(subset=[date_col, price_col])
 df.set_index(date_col, inplace=True)
 
-tf_map = {
-    "Original": None,
-    "1 Min": "1T",
-    "5 Min": "5T",
-    "15 Min": "15T",
-    "30 Min": "30T"
-}
+tf_map = {"Original": None, "1 Min": "1T", "5 Min": "5T", "15 Min": "15T", "30 Min": "30T"}
+if tf_map[timeframe]:
+    df = df.resample(tf_map[timeframe]).last().dropna()
 
-tf = st.selectbox("⏱ Timeframe", list(tf_map.keys()))
-if tf_map[tf]:
-    df = df.resample(tf_map[tf]).last().dropna()
-
-series = df[price_col].astype(float)
 series = prepare_series(df, price_col)
 train, test = train_test_split_series(series, 0.2)
 
-st.line_chart(series.tail(200))
+st.markdown("<div class='glass-card'><h3>📈 Price Trend</h3></div>", unsafe_allow_html=True)
+st.line_chart(series.tail(300))
 
 # =========================
-# ✅ SETTINGS
+# ✅ RUN ALL MODELS
 # =========================
-horizon = st.selectbox("📅 Forecast Horizon", [7, 15, 30, 60], index=2)
-
-# =========================
-# ✅ RUN MODELS
-# =========================
-if st.button("🚀 Run All Models + Trading Engine"):
+if st.button("🚀 Run AI Models"):
 
     preds = {}
     metrics = {}
-    errors = {}
     future_index = pd.date_range(series.index[-1], periods=horizon+1, freq="D")[1:]
 
-    # ARIMA
-    try:
-        arima = train_arima(train, order=(5,1,0))
-        preds["ARIMA"] = pd.Series(forecast_arima(arima, horizon), index=future_index)
-    except Exception as e:
-        errors["ARIMA"] = str(e)
+    arima = train_arima(train, (5,1,0))
+    preds["ARIMA"] = pd.Series(forecast_arima(arima, horizon), index=future_index)
 
-    # SARIMA
-    try:
-        sarima = train_sarima(train)
-        preds["SARIMA"] = pd.Series(forecast_sarima(sarima, horizon), index=future_index)
-    except Exception as e:
-        errors["SARIMA"] = str(e)
+    sarima = train_sarima(train)
+    preds["SARIMA"] = pd.Series(forecast_sarima(sarima, horizon), index=future_index)
 
-    # PROPHET
-    try:
-        prophet = train_prophet(train)
-        preds["Prophet"] = pd.Series(forecast_prophet(prophet, horizon).values, index=future_index)
-    except Exception as e:
-        errors["Prophet"] = str(e)
+    prophet = train_prophet(train)
+    preds["Prophet"] = pd.Series(forecast_prophet(prophet, horizon).values, index=future_index)
 
-    # LSTM
-    try:
-        scaler = MinMaxScaler()
-        scaled = scaler.fit_transform(series.values.reshape(-1,1))
-        train_scaled = scaled[:len(train)]
-        lstm_model = train_lstm(train_scaled, seq_len=20, epochs=2, batch_size=8)
-        preds["LSTM"] = pd.Series(
-            forecast_lstm(lstm_model, scaled, scaler, 20, horizon),
-            index=future_index
-        )
-    except Exception as e:
-        errors["LSTM"] = str(e)
+    scaler = MinMaxScaler()
+    scaled = scaler.fit_transform(series.values.reshape(-1,1))
+    train_scaled = scaled[:len(train)]
+
+    lstm_model = train_lstm(train_scaled, 20, 2, 8)
+    preds["LSTM"] = pd.Series(
+        forecast_lstm(lstm_model, scaled, scaler, 20, horizon),
+        index=future_index
+    )
 
     # =========================
-    # ✅ INDIVIDUAL COLORFUL CHARTS + DOWNLOAD
+    # ✅ INDIVIDUAL MODEL CHARTS
     # =========================
     st.subheader("🎯 Individual Model Forecasts")
-
-    model_colors = {
-        "ARIMA": "#22c55e",
-        "SARIMA": "#06b6d4",
-        "Prophet": "#a78bfa",
-        "LSTM": "#f97316"
-    }
-
+    model_colors = {"ARIMA":"#22c55e","SARIMA":"#06b6d4","Prophet":"#a78bfa","LSTM":"#f97316"}
     cols = st.columns(2)
-    i = 0
 
+    i = 0
     for model_name, forecast in preds.items():
         with cols[i % 2]:
             st.markdown("<div class='model-card'>", unsafe_allow_html=True)
@@ -206,13 +229,13 @@ if st.button("🚀 Run All Models + Trading Engine"):
 
             fig, ax = plt.subplots(figsize=(7,4))
             series.tail(200).plot(ax=ax, label="Actual", color="white")
-            forecast.plot(ax=ax, label=model_name, color=model_colors.get(model_name, "cyan"))
+            forecast.plot(ax=ax, label=model_name, color=model_colors[model_name])
             ax.legend()
 
             buf = io.BytesIO()
-            fig.savefig(buf, format="png", bbox_inches="tight")
+            fig.savefig(buf, format="png")
             buf.seek(0)
-            plt.close(fig)
+            plt.close()
 
             st.image(buf)
             st.download_button(
@@ -220,23 +243,20 @@ if st.button("🚀 Run All Models + Trading Engine"):
                 buf.getvalue(),
                 f"{model_name.lower()}_forecast.png",
                 "image/png",
-                key=f"dl_{model_name}"
+                key=model_name
             )
-
             st.markdown("</div>", unsafe_allow_html=True)
         i += 1
 
     # =========================
     # ✅ COMBINED COMPARISON
     # =========================
-    st.subheader("📊 Combined Model Forecast Comparison")
+    st.subheader("📊 Combined Forecast Comparison")
 
     fig, ax = plt.subplots(figsize=(12,5))
     series.tail(200).plot(ax=ax, label="Actual")
-
     for name, p in preds.items():
         p.plot(ax=ax, label=name)
-
     ax.legend()
     st.pyplot(fig)
 
@@ -256,21 +276,19 @@ if st.button("🚀 Run All Models + Trading Engine"):
     st.dataframe(metrics_df)
 
     # =========================
-    # ✅ TRADING ENGINE
+    # ✅ TRADING SIGNAL + RISK MANAGEMENT
     # =========================
     last_price = series.iloc[-1]
-    future_price = preds[list(preds.keys())[0]].iloc[-1]
+    future_price = preds["ARIMA"].iloc[-1]
+
     signal, strength = generate_signal(last_price, future_price)
     target, stop = calculate_target_stop(last_price, signal)
 
-    st.subheader("📢 Trade Signal")
+    st.subheader("📢 AI Trade Signal")
     st.metric("Signal", signal)
     st.metric("Expected Move %", f"{strength:.2f}%")
 
     if target:
-        capital = st.number_input("Trading Capital", 1000, 10_000_000, 100000, step=1000)
-        risk_percent = st.slider("Risk % per Trade", 0.5, 5.0, 1.0, step=0.5)
-
         qty, pos_value, risk_amt = calculate_position_size(
             capital, last_price, stop, risk_percent
         )
@@ -294,11 +312,3 @@ if st.button("🚀 Run All Models + Trading Engine"):
     col3.metric("Max Drawdown %", f"{drawdown:.2f}%")
 
     st.line_chart(equity)
-
-    # =========================
-    # ✅ ERRORS
-    # =========================
-    if errors:
-        st.subheader("⚠ Model Errors")
-        for k, v in errors.items():
-            st.code(f"{k} → {v}")
