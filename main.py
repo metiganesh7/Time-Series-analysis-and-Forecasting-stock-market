@@ -136,85 +136,150 @@ with tab1:
     st.subheader("📈 Price Trend")
     st.line_chart(series.tail(300))
 
-    if st.button("🚀 Run All Models", key="run_models_pro"):
-        preds = {}
-        errors = {}
+if st.button("🚀 Run All Models", key="run_models_pro"):
 
-        future_index = pd.date_range(series.index[-1], periods=horizon+1, freq="D")[1:]
+    preds = {}
+    metrics = {}
+    errors = {}
 
+    future_index = pd.date_range(
+        start=series.index[-1],
+        periods=horizon + 1,
+        freq=pd.infer_freq(series.index) or "D"
+    )[1:]
+
+    # -------------------- ARIMA --------------------
+    try:
+        st.write("⏳ Running ARIMA...")
+        arima = train_arima(train, order=(5,1,0))
+        arima_vals = forecast_arima(arima, horizon)
+        preds["ARIMA"] = pd.Series(arima_vals, index=future_index)
+        st.success("✅ ARIMA done")
+    except Exception as e:
+        errors["ARIMA"] = str(e)
+
+    # -------------------- SARIMA --------------------
+    try:
+        st.write("⏳ Running SARIMA...")
+        sarima = train_sarima(train)
+        sarima_vals = forecast_sarima(sarima, horizon)
+        preds["SARIMA"] = pd.Series(sarima_vals, index=future_index)
+        st.success("✅ SARIMA done")
+    except Exception as e:
+        errors["SARIMA"] = str(e)
+
+    # -------------------- PROPHET --------------------
+    if use_prophet and PROPHET_AVAILABLE:
         try:
-            arima = train_arima(train, order=(5,1,0))
-            preds["ARIMA"] = pd.Series(forecast_arima(arima, horizon), index=future_index)
-        except Exception as e:
-            errors["ARIMA"] = str(e)
+            st.write("⏳ Running Prophet...")
+            prophet_model = train_prophet(train)
+            prophet_vals = forecast_prophet(prophet_model, horizon)
 
+            # ✅ FORCE PROPHET TO MATCH FUTURE INDEX
+            prophet_vals = prophet_vals.iloc[-horizon:].values
+            preds["Prophet"] = pd.Series(prophet_vals, index=future_index)
+
+            st.success("✅ Prophet done")
+        except Exception as e:
+            errors["Prophet"] = str(e)
+
+    # -------------------- LSTM --------------------
+    if use_lstm and LSTM_AVAILABLE:
         try:
-            sarima = train_sarima(train)
-            preds["SARIMA"] = pd.Series(forecast_sarima(sarima, horizon), index=future_index)
+            st.write("⏳ Running LSTM...")
+            scaler = MinMaxScaler()
+            scaled = scaler.fit_transform(series.values.reshape(-1,1))
+
+            train_scaled = scaled[:len(train)]
+
+            lstm_model = train_lstm(train_scaled, seq_len=20, epochs=3, batch_size=8)
+
+            lstm_forecast = forecast_lstm(
+                model=lstm_model,
+                full_series_scaled=scaled,
+                scaler=scaler,
+                seq_len=20,
+                steps=horizon
+            )
+
+            preds["LSTM"] = pd.Series(lstm_forecast, index=future_index)
+
+            st.success("✅ LSTM done")
         except Exception as e:
-            errors["SARIMA"] = str(e)
+            errors["LSTM"] = str(e)
 
-        if use_prophet and PROPHET_AVAILABLE:
-            try:
-                prophet = train_prophet(train)
-                pf = forecast_prophet(prophet, horizon)
-                preds["Prophet"] = pd.Series(pf.values, index=future_index)
-            except Exception as e:
-                errors["Prophet"] = str(e)
+    # -------------------- ERROR DISPLAY --------------------
+    if errors:
+        st.subheader("❌ Model Errors")
+        for k, v in errors.items():
+            st.code(f"{k} → {v}")
 
-        if use_lstm and LSTM_AVAILABLE:
-            try:
-                scaler = MinMaxScaler()
-                scaled = scaler.fit_transform(series.values.reshape(-1,1))
-                train_scaled = scaled[:len(train)]
-                lstm_model = train_lstm(train_scaled, 20, 2, 8)
-                lf = forecast_lstm(lstm_model, scaled, scaler, 20, horizon)
-                preds["LSTM"] = pd.Series(lf, index=future_index)
-            except Exception as e:
-                errors["LSTM"] = str(e)
+    if not preds:
+        st.error("❌ No model produced output.")
+        st.stop()
 
-        if errors:
-            st.subheader("❌ Model Errors")
-            for k,v in errors.items():
-                st.code(f"{k} → {v}")
+    # =========================
+    # ✅ COMBINED FORECAST
+    # =========================
+    st.subheader("📊 Combined Forecast Comparison")
 
-        if preds:
-            st.subheader("🎯 Forecasts")
-            fig, ax = plt.subplots(figsize=(12,5))
+    fig, ax = plt.subplots(figsize=(12,5))
+    series.tail(200).plot(ax=ax, label="Actual", linewidth=2)
+
+    for name, p in preds.items():
+        p.plot(ax=ax, label=name, linewidth=2)
+
+    ax.legend()
+    st.pyplot(fig)
+
+    # =========================
+    # ✅ METRICS + RANKING
+    # =========================
+    for name, p in preds.items():
+        align = min(len(test), len(p))
+        rmse = np.sqrt(mean_squared_error(test.values[:align], p.values[:align]))
+        mse = mean_squared_error(test.values[:align], p.values[:align])
+        mape = np.mean(np.abs((test.values[:align] - p.values[:align]) / test.values[:align])) * 100
+
+        metrics[name] = {
+            "RMSE": rmse,
+            "MSE": mse,
+            "MAPE (%)": mape
+        }
+
+    metrics_df = pd.DataFrame(metrics).T
+    metrics_df["Rank"] = metrics_df["RMSE"].rank()
+
+    st.subheader("📈 Model Accuracy & Rankings")
+    st.dataframe(metrics_df.sort_values("Rank"))
+
+    # =========================
+    # ✅ INDIVIDUAL MODEL GRAPHS + DOWNLOADS
+    # =========================
+    st.subheader("🎯 Individual Model Forecasts")
+
+    cols = st.columns(2)
+    i = 0
+
+    for name, p in preds.items():
+        with cols[i % 2]:
+            fig, ax = plt.subplots(figsize=(7,4))
             series.tail(200).plot(ax=ax, label="Actual")
-            for name,p in preds.items(): p.plot(ax=ax, label=name)
+            p.plot(ax=ax, label=name, linewidth=2)
+            ax.set_title(f"{name} Forecast")
             ax.legend()
-            st.pyplot(fig)
 
-            st.session_state["preds"] = preds
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", bbox_inches="tight")
+            buf.seek(0)
 
-with tab2:
-    if "preds" in st.session_state:
-        preds = st.session_state["preds"]
-        last_price = series.iloc[-1]
-        future_price = preds[list(preds.keys())[0]].iloc[-1]
-        signal, strength = generate_signal(last_price, future_price)
-        target, stop = calculate_target_stop(last_price, signal)
-        qty = position_size(capital, last_price, stop)
+            st.image(buf)
 
-        st.metric("Signal", signal)
-        st.metric("Expected Move %", f"{strength:.2f}%")
-        c1,c2,c3,c4 = st.columns(4)
-        c1.metric("Entry", f"{last_price:.2f}")
-        c2.metric("Target", f"{target:.2f}")
-        c3.metric("Stop", f"{stop:.2f}")
-        c4.metric("Quantity", qty)
-
-with tab3:
-    equity, total_return, win_rate, drawdown = backtest_engine(test)
-    c1,c2,c3 = st.columns(3)
-    c1.metric("Return %", f"{total_return:.2f}")
-    c2.metric("Win Rate %", f"{win_rate:.2f}")
-    c3.metric("Drawdown %", f"{drawdown:.2f}")
-    st.line_chart(equity)
-
-with tab4:
-    if "preds" in st.session_state:
-        for name, p in st.session_state["preds"].items():
-            csv = p.to_csv().encode("utf-8")
-            st.download_button(f"⬇ Download {name} Forecast CSV", csv, f"{name}_forecast.csv")
+            st.download_button(
+                f"⬇ Download {name} Forecast",
+                buf.getvalue(),
+                f"{name}_forecast.png",
+                "image/png",
+                key=f"dl_{name}"
+            )
+        i += 1
