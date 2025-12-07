@@ -38,7 +38,7 @@ except:
 st.set_page_config(page_title="AI Trading Terminal Pro", layout="wide")
 
 # =========================
-# ✅ PREMIUM TERMINAL UI
+# ✅ PREMIUM UI
 # =========================
 st.markdown("""
 <style>
@@ -62,13 +62,13 @@ def generate_signal(last_price, forecast_price):
     return "HOLD", pct
 
 def calculate_target_stop(price, signal):
-    if signal == "BUY": return price*1.02, price*0.99
-    if signal == "SELL": return price*0.98, price*1.01
+    if signal == "BUY": return price * 1.02, price * 0.99
+    if signal == "SELL": return price * 0.98, price * 1.01
     return None, None
 
 def position_size(capital, entry, stop):
     risk_amt = capital * 0.01
-    per_share = abs(entry - stop)
+    per_share = abs(entry - stop) if stop else 0
     if per_share == 0: return 0
     qty = int(risk_amt / per_share)
     return min(qty, int(capital / entry))
@@ -80,24 +80,28 @@ def backtest_engine(series, capital=100000):
 
     for i in range(1, len(series)):
         p0, p1 = series.iloc[i-1], series.iloc[i]
+
         if position == 0 and p1 > p0:
             stop = p1 * 0.99
-            qty = int((balance * 0.01) / abs(p1-stop))
+            qty = int((balance * 0.01) / abs(p1 - stop))
             position = qty
             balance -= qty * p1
+
         elif position > 0 and p1 < p0:
             balance += position * p1
             position = 0
+
         equity.append(balance + position * p1)
 
     equity = pd.Series(equity)
     total_return = (equity.iloc[-1] / capital - 1) * 100
     win_rate = (equity.pct_change().fillna(0) > 0).mean() * 100
     drawdown = (equity / equity.cummax() - 1).min() * 100
+
     return equity, total_return, win_rate, drawdown
 
 # =========================
-# ✅ SIDEBAR CONTROLS
+# ✅ SIDEBAR
 # =========================
 with st.sidebar:
     st.markdown("## ⚙ Control Panel")
@@ -111,7 +115,7 @@ if not file:
     st.stop()
 
 # =========================
-# ✅ LOAD DATA (SAFE)
+# ✅ LOAD DATA
 # =========================
 df = pd.read_csv(file)
 df.columns = [c.strip() for c in df.columns]
@@ -128,7 +132,7 @@ series = prepare_series(df, price_col)
 train, test = train_test_split_series(series, 0.2)
 
 # =========================
-# ✅ TOP TABS (PRO TERMINAL)
+# ✅ TABS
 # =========================
 tab1, tab2, tab3, tab4 = st.tabs(["📈 Forecast", "🎯 Signals", "📊 Backtesting", "📥 Downloads"])
 
@@ -136,150 +140,99 @@ with tab1:
     st.subheader("📈 Price Trend")
     st.line_chart(series.tail(300))
 
-if st.button("🚀 Run All Models", key="run_models_pro"):
+    if st.button("🚀 Run All Models"):
+        preds = {}
+        metrics = {}
+        errors = {}
 
-    preds = {}
-    metrics = {}
-    errors = {}
+        future_index = pd.date_range(series.index[-1], periods=horizon+1, freq="D")[1:]
 
-    future_index = pd.date_range(
-        start=series.index[-1],
-        periods=horizon + 1,
-        freq=pd.infer_freq(series.index) or "D"
-    )[1:]
-
-    # -------------------- ARIMA --------------------
-    try:
-        st.write("⏳ Running ARIMA...")
+        # ARIMA
         arima = train_arima(train, order=(5,1,0))
-        arima_vals = forecast_arima(arima, horizon)
-        preds["ARIMA"] = pd.Series(arima_vals, index=future_index)
-        st.success("✅ ARIMA done")
-    except Exception as e:
-        errors["ARIMA"] = str(e)
+        preds["ARIMA"] = pd.Series(forecast_arima(arima, horizon), index=future_index)
 
-    # -------------------- SARIMA --------------------
-    try:
-        st.write("⏳ Running SARIMA...")
+        # SARIMA
         sarima = train_sarima(train)
-        sarima_vals = forecast_sarima(sarima, horizon)
-        preds["SARIMA"] = pd.Series(sarima_vals, index=future_index)
-        st.success("✅ SARIMA done")
-    except Exception as e:
-        errors["SARIMA"] = str(e)
+        preds["SARIMA"] = pd.Series(forecast_sarima(sarima, horizon), index=future_index)
 
-    # -------------------- PROPHET --------------------
-    if use_prophet and PROPHET_AVAILABLE:
-        try:
-            st.write("⏳ Running Prophet...")
+        # PROPHET
+        if use_prophet and PROPHET_AVAILABLE:
             prophet_model = train_prophet(train)
-            prophet_vals = forecast_prophet(prophet_model, horizon)
+            pf = forecast_prophet(prophet_model, horizon).values
+            preds["Prophet"] = pd.Series(pf, index=future_index)
 
-            # ✅ FORCE PROPHET TO MATCH FUTURE INDEX
-            prophet_vals = prophet_vals.iloc[-horizon:].values
-            preds["Prophet"] = pd.Series(prophet_vals, index=future_index)
-
-            st.success("✅ Prophet done")
-        except Exception as e:
-            errors["Prophet"] = str(e)
-
-    # -------------------- LSTM --------------------
-    if use_lstm and LSTM_AVAILABLE:
-        try:
-            st.write("⏳ Running LSTM...")
+        # LSTM
+        if use_lstm and LSTM_AVAILABLE:
             scaler = MinMaxScaler()
             scaled = scaler.fit_transform(series.values.reshape(-1,1))
-
             train_scaled = scaled[:len(train)]
 
             lstm_model = train_lstm(train_scaled, seq_len=20, epochs=3, batch_size=8)
-
-            lstm_forecast = forecast_lstm(
-                model=lstm_model,
-                full_series_scaled=scaled,
-                scaler=scaler,
-                seq_len=20,
-                steps=horizon
-            )
+            lstm_forecast = forecast_lstm(lstm_model, scaled, scaler, 20, horizon)
 
             preds["LSTM"] = pd.Series(lstm_forecast, index=future_index)
 
-            st.success("✅ LSTM done")
-        except Exception as e:
-            errors["LSTM"] = str(e)
+        # Metrics
+        for name, p in preds.items():
+            align = min(len(test), len(p))
+            rmse = np.sqrt(mean_squared_error(test.values[:align], p.values[:align]))
+            mse = mean_squared_error(test.values[:align], p.values[:align])
+            mape = np.mean(np.abs((test.values[:align] - p.values[:align]) / test.values[:align])) * 100
 
-    # -------------------- ERROR DISPLAY --------------------
-    if errors:
-        st.subheader("❌ Model Errors")
-        for k, v in errors.items():
-            st.code(f"{k} → {v}")
+            metrics[name] = {"RMSE": rmse, "MSE": mse, "MAPE (%)": mape}
 
-    if not preds:
-        st.error("❌ No model produced output.")
-        st.stop()
+        metrics_df = pd.DataFrame(metrics).T
+        metrics_df["Rank"] = metrics_df["RMSE"].rank()
 
-    # =========================
-    # ✅ COMBINED FORECAST
-    # =========================
-    st.subheader("📊 Combined Forecast Comparison")
+        st.session_state["preds"] = preds
+        st.session_state["metrics"] = metrics_df
 
-    fig, ax = plt.subplots(figsize=(12,5))
-    series.tail(200).plot(ax=ax, label="Actual", linewidth=2)
+        # ✅ Combined Chart
+        fig, ax = plt.subplots(figsize=(12,5))
+        series.tail(200).plot(ax=ax, label="Actual")
+        for name,p in preds.items(): p.plot(ax=ax, label=name)
+        ax.legend()
+        st.pyplot(fig)
 
-    for name, p in preds.items():
-        p.plot(ax=ax, label=name, linewidth=2)
+        st.dataframe(metrics_df.sort_values("Rank"))
 
-    ax.legend()
-    st.pyplot(fig)
+with tab2:
+    if "preds" in st.session_state:
+        preds = st.session_state["preds"]
+        metrics_df = st.session_state["metrics"]
 
-    # =========================
-    # ✅ METRICS + RANKING
-    # =========================
-    for name, p in preds.items():
-        align = min(len(test), len(p))
-        rmse = np.sqrt(mean_squared_error(test.values[:align], p.values[:align]))
-        mse = mean_squared_error(test.values[:align], p.values[:align])
-        mape = np.mean(np.abs((test.values[:align] - p.values[:align]) / test.values[:align])) * 100
+        best_model = metrics_df.sort_values("Rank").index[0]
+        best_forecast = preds[best_model]
 
-        metrics[name] = {
-            "RMSE": rmse,
-            "MSE": mse,
-            "MAPE (%)": mape
-        }
+        last_price = series.iloc[-1]
+        future_price = best_forecast.iloc[-1]
 
-    metrics_df = pd.DataFrame(metrics).T
-    metrics_df["Rank"] = metrics_df["RMSE"].rank()
+        signal, strength = generate_signal(last_price, future_price)
+        target, stop = calculate_target_stop(last_price, signal)
+        qty = position_size(capital, last_price, stop)
 
-    st.subheader("📈 Model Accuracy & Rankings")
-    st.dataframe(metrics_df.sort_values("Rank"))
+        c1,c2,c3,c4 = st.columns(4)
+        c1.metric("Best Model", best_model)
+        c2.metric("Signal", signal)
+        c3.metric("Entry", f"{last_price:.2f}")
+        c4.metric("Quantity", qty)
 
-    # =========================
-    # ✅ INDIVIDUAL MODEL GRAPHS + DOWNLOADS
-    # =========================
-    st.subheader("🎯 Individual Model Forecasts")
+        st.metric("Target", target)
+        st.metric("Stop", stop)
+        st.metric("Expected Move %", f"{strength:.2f}%")
 
-    cols = st.columns(2)
-    i = 0
+with tab3:
+    equity, total_return, win_rate, drawdown = backtest_engine(test, capital)
 
-    for name, p in preds.items():
-        with cols[i % 2]:
-            fig, ax = plt.subplots(figsize=(7,4))
-            series.tail(200).plot(ax=ax, label="Actual")
-            p.plot(ax=ax, label=name, linewidth=2)
-            ax.set_title(f"{name} Forecast")
-            ax.legend()
+    c1,c2,c3 = st.columns(3)
+    c1.metric("Total Return %", f"{total_return:.2f}")
+    c2.metric("Win Rate %", f"{win_rate:.2f}")
+    c3.metric("Max Drawdown %", f"{drawdown:.2f}")
 
-            buf = io.BytesIO()
-            fig.savefig(buf, format="png", bbox_inches="tight")
-            buf.seek(0)
+    st.line_chart(equity)
 
-            st.image(buf)
-
-            st.download_button(
-                f"⬇ Download {name} Forecast",
-                buf.getvalue(),
-                f"{name}_forecast.png",
-                "image/png",
-                key=f"dl_{name}"
-            )
-        i += 1
+with tab4:
+    if "preds" in st.session_state:
+        for name,p in st.session_state["preds"].items():
+            csv = p.to_csv().encode("utf-8")
+            st.download_button(f"⬇ Download {name}", csv, f"{name}_forecast.csv")
