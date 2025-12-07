@@ -223,37 +223,120 @@ st.line_chart(series.tail(300))
 # =========================
 if st.button("🚀 Run AI Models"):
 
+  if st.button("🚀 Run AI Models"):
+
+    st.info("Running models… please wait ⏳")
+
     preds = {}
     metrics = {}
-    future_index = pd.date_range(series.index[-1], periods=horizon+1, freq="D")[1:]
+    errors = {}
 
-    arima = train_arima(train, (5,1,0))
-    preds["ARIMA"] = pd.Series(forecast_arima(arima, horizon), index=future_index)
+    future_index = pd.date_range(
+        series.index[-1], periods=horizon + 1, freq="D"
+    )[1:]
 
-    sarima = train_sarima(train)
-    preds["SARIMA"] = pd.Series(forecast_sarima(sarima, horizon), index=future_index)
+    # -------------------------
+    # ✅ ARIMA
+    # -------------------------
+    try:
+        arima = train_arima(train, order=(5, 1, 0))
+        preds["ARIMA"] = pd.Series(
+            forecast_arima(arima, horizon),
+            index=future_index
+        )
+        st.success("✅ ARIMA completed")
+    except Exception as e:
+        errors["ARIMA"] = str(e)
 
-    prophet = train_prophet(train)
-    preds["Prophet"] = pd.Series(forecast_prophet(prophet, horizon).values, index=future_index)
+    # -------------------------
+    # ✅ SARIMA
+    # -------------------------
+    try:
+        sarima = train_sarima(train)
+        preds["SARIMA"] = pd.Series(
+            forecast_sarima(sarima, horizon),
+            index=future_index
+        )
+        st.success("✅ SARIMA completed")
+    except Exception as e:
+        errors["SARIMA"] = str(e)
 
-    scaler = MinMaxScaler()
-    scaled = scaler.fit_transform(series.values.reshape(-1,1))
-    train_scaled = scaled[:len(train)]
+    # -------------------------
+    # ✅ PROPHET
+    # -------------------------
+    try:
+        prophet = train_prophet(train)
+        prophet_fc = forecast_prophet(prophet, horizon)
+        preds["Prophet"] = pd.Series(
+            prophet_fc.values,
+            index=future_index
+        )
+        st.success("✅ Prophet completed")
+    except Exception as e:
+        errors["Prophet"] = str(e)
 
-    lstm_model = train_lstm(train_scaled, 20, 2, 8)
-    preds["LSTM"] = pd.Series(
-        forecast_lstm(lstm_model, scaled, scaler, 20, horizon),
-        index=future_index
-    )
+    # -------------------------
+    # ✅ LSTM
+    # -------------------------
+    try:
+        scaler = MinMaxScaler()
+        scaled = scaler.fit_transform(series.values.reshape(-1, 1))
+        train_scaled = scaled[: len(train)]
 
-    # ✅ TRADING SIGNAL + POSITION SIZING
-    last_price = series.iloc[-1]
-    future_price = preds["ARIMA"].iloc[-1]
+        lstm_model = train_lstm(
+            train_scaled,
+            seq_len=20,
+            epochs=2,
+            batch_size=8
+        )
+
+        lstm_pred = forecast_lstm(
+            lstm_model,
+            scaled,
+            scaler,
+            20,
+            horizon
+        )
+
+        preds["LSTM"] = pd.Series(
+            lstm_pred,
+            index=future_index
+        )
+
+        st.success("✅ LSTM completed")
+
+    except Exception as e:
+        errors["LSTM"] = str(e)
+
+    # -------------------------
+    # ✅ SHOW MODEL ERRORS
+    # -------------------------
+    if errors:
+        st.subheader("❌ Model Errors (Why models didn’t run)")
+        for k, v in errors.items():
+            st.code(f"{k} ERROR → {v}")
+
+    # -------------------------
+    # ✅ STOP IF NOTHING RAN
+    # -------------------------
+    if not preds:
+        st.error("⚠ NONE of the models ran successfully. Check errors above.")
+        st.stop()
+
+    st.success("🎯 All available models finished!")
+
+    # -------------------------
+    # ✅ CONTINUE WITH SIGNAL + BACKTEST
+    # -------------------------
+    last_price = float(series.iloc[-1])
+    future_price = float(preds[list(preds.keys())[0]].iloc[-1])
 
     signal, strength = generate_signal(last_price, future_price)
     target, stop = calculate_target_stop(last_price, signal)
 
-    qty, pos_value, risk_amt = calculate_position_size(capital, last_price, stop, risk_percent)
+    qty, pos_value, risk_amt = calculate_position_size(
+        capital, last_price, stop, risk_percent
+    )
 
     st.subheader("📢 Trade Signal")
     st.metric("Signal", signal)
@@ -265,7 +348,9 @@ if st.button("🚀 Run AI Models"):
     c3.metric("Stop", f"{stop:.2f}")
     c4.metric("Quantity", qty)
 
+    # -------------------------
     # ✅ BACKTEST
+    # -------------------------
     st.subheader("📊 Strategy Backtesting")
     equity, total_return, win_rate, drawdown = backtest_strategy(test)
 
@@ -275,3 +360,4 @@ if st.button("🚀 Run AI Models"):
     col3.metric("Max Drawdown %", f"{drawdown:.2f}%")
 
     st.line_chart(equity)
+
