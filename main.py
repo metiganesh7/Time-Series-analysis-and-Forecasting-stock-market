@@ -221,8 +221,8 @@ st.line_chart(series.tail(300))
 # =========================
 # ✅ RUN ALL MODELS
 # =========================
+if st.button("🚀 Run AI Models"):
 
-  if st.button("🚀 Run AI Models"):
 
     st.info("Running models… please wait ⏳")
 
